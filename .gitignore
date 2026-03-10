@@ -39,3 +39,8 @@ Thumbs.db
 
 # Keep example env (no secrets)
 !env.example
+
+# Web
+web/node_modules/
+web/.next/
+

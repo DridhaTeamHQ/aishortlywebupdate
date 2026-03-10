@@ -36,40 +36,39 @@ DEFAULT_CATEGORY_SOURCES: Dict[str, List[Dict[str, str]]] = {
     "business": [
         {"name": "TOI", "scraper": "toi", "url": "https://timesofindia.indiatimes.com/business"},
         {"name": "India Today", "scraper": "indiatoday", "url": "https://www.indiatoday.in/business"},
-        {"name": "BBC", "scraper": "bbc", "url": "https://www.bbc.com/news/business"},
+        {"name": "Reuters", "scraper": "reuters", "url": "https://www.reuters.com/business/"},
     ],
     "tech": [
         {"name": "TOI", "scraper": "toi", "url": "https://timesofindia.indiatimes.com/technology"},
         {"name": "India Today", "scraper": "indiatoday", "url": "https://www.indiatoday.in/technology"},
-        {"name": "BBC", "scraper": "bbc", "url": "https://www.bbc.com/news/technology"},
+        {"name": "Reuters", "scraper": "reuters", "url": "https://www.reuters.com/technology/"},
     ],
     "international": [
         {"name": "TOI", "scraper": "toi", "url": "https://timesofindia.indiatimes.com/world"},
         {"name": "India Today", "scraper": "indiatoday", "url": "https://www.indiatoday.in/world"},
-        {"name": "BBC", "scraper": "bbc", "url": "https://www.bbc.com/news"},
+        {"name": "Reuters", "scraper": "reuters", "url": "https://www.reuters.com/world/"},
         {"name": "AlJazeera", "scraper": "aljazeera", "url": "https://www.aljazeera.com/news"},
-        {"name": "NDTV", "scraper": "ndtv", "url": "https://www.ndtv.com/world-news"},
     ],
     "national": [
         {"name": "TOI", "scraper": "toi", "url": "https://timesofindia.indiatimes.com/india"},
-        {"name": "NDTV", "scraper": "ndtv", "url": "https://www.ndtv.com/india"},
+        {"name": "Reuters", "scraper": "reuters", "url": "https://www.reuters.com/world/india/"},
         {"name": "India Today", "scraper": "indiatoday", "url": "https://www.indiatoday.in/india"},
     ],
     "environment": [
         {"name": "India Today", "scraper": "indiatoday", "url": "https://www.indiatoday.in/environment"},
         {"name": "TOI", "scraper": "toi", "url": "https://timesofindia.indiatimes.com/india"},
-        {"name": "AlJazeera", "scraper": "aljazeera", "url": "https://www.aljazeera.com/climate-crisis"},
+        {"name": "Reuters", "scraper": "reuters", "url": "https://www.reuters.com/sustainability/"},
     ],
     "crime": [
+        {"name": "TOI", "scraper": "toi", "url": "https://timesofindia.indiatimes.com/city"},
         {"name": "TOI", "scraper": "toi", "url": "https://timesofindia.indiatimes.com/india"},
-        {"name": "NDTV", "scraper": "ndtv", "url": "https://www.ndtv.com/india"},
-        {"name": "India Today", "scraper": "indiatoday", "url": "https://www.indiatoday.in/india"},
+        {"name": "India Today", "scraper": "indiatoday", "url": "https://www.indiatoday.in/crime"},
+
     ],
     "sports": [
         {"name": "TOI", "scraper": "toi", "url": "https://timesofindia.indiatimes.com/sports"},
-        {"name": "NDTV", "scraper": "ndtv", "url": "https://sports.ndtv.com/"},
         {"name": "India Today", "scraper": "indiatoday", "url": "https://www.indiatoday.in/sports"},
-        {"name": "AlJazeera", "scraper": "aljazeera", "url": "https://www.aljazeera.com/sports/"},
+        {"name": "Reuters", "scraper": "reuters", "url": "https://www.reuters.com/sports/"},
     ],
 }
 
@@ -103,18 +102,16 @@ def _parse_category_sources(name: str = "CATEGORY_SOURCES") -> Dict[str, List[Di
 
 
 DEFAULT_SOURCE_CREDIBILITY = {
-    "BBC": 0.9,
-    "AlJazeera": 0.82,
-    "TOI": 0.78,
-    "NDTV": 0.72,
-    "India Today": 0.79,
+    "TOI": 0.80,
+    "India Today": 0.82,
     "Reuters": 0.95,
+    "AlJazeera": 0.82,
 }
 
 DEFAULT_IMAGE_THRESHOLDS = {
     "min_width": 420,
     "min_height": 236,
-    "min_file_size_bytes": 30000,
+    "min_file_size_bytes": 15000,
     "min_aspect_ratio": 0.4,
     "max_aspect_ratio": 2.8,
     "min_sharpness": 18.0,

@@ -472,6 +472,7 @@ Headline style patterns (factual, high-click, non-clickbait):
 
         if len(out) < target_chars - 5:
             fragment_sources = list(reversed(existing + candidates))
+            used_fragments: set = set()
             for source in fragment_sources:
                 tokens = source.rstrip('.!?').split()
                 start = max(6, min(10, len(tokens) // 2))
@@ -479,6 +480,17 @@ Headline style patterns (factual, high-click, non-clickbait):
                     fragment = " ".join(tokens[:size]).rstrip(" ,.-")
                     if not fragment:
                         continue
+                    # Dedup: skip if fragment overlaps >60% with existing text
+                    frag_words = set(fragment.lower().split())
+                    out_words = set(out.lower().split())
+                    if frag_words and out_words:
+                        overlap = len(frag_words & out_words) / len(frag_words)
+                        if overlap >= 0.6:
+                            continue
+                    frag_key = " ".join(sorted(frag_words))
+                    if frag_key in used_fragments:
+                        continue
+                    used_fragments.add(frag_key)
                     proposal = f"{out} {fragment}.".strip()
                     if len(proposal) <= max_chars:
                         out = proposal
@@ -557,9 +569,9 @@ Headline style patterns (factual, high-click, non-clickbait):
     def summarize(self, title: str, body: str) -> Optional[Dict[str, str]]:
         min_title = 36
         max_title = 62
-        target_body = 360
-        min_body = 345
-        max_body = 365
+        target_body = 350
+        min_body = 299
+        max_body = 360
 
         article_title = " ".join((title or "").split())
         article_body = " ".join((body or "").split())[:2600]
@@ -592,7 +604,7 @@ Requirements:
 - Prefer sharper newsroom verbs such as hits, jolts, warns, scrambles, squeezes, blocks, races, surges, slams.
 - Prefer one of these title devices: number, quote fragment, direct contrast, or high-stakes consequence.
 - If reference examples are relevant, match their directness and compression without copying phrasing.
-- Body: 345-365 characters, ideally near 360, in 4-5 sentences.
+- Body: 299-360 characters, ideally near 350, in 4-5 sentences.
 - Sentence 1 must be a factual hook with the most important development.
 - For ongoing developments, prefer present continuous in body (is/are + verb-ing).
 - Add quick context by sentence 2 and immediate consequence by sentence 3.
@@ -617,7 +629,7 @@ Requirements:
                             "content": (
                                 "Rewrite for stronger hook and engagement while staying factual. "
                                 "Title 36-62 chars with active verb, clear consequence; "
-                                "body 345-365 chars, concrete and tight, with clean punctuation; JSON only."
+                                "body 299-360 chars, concrete and tight, with clean punctuation; JSON only."
                             ),
                         }
                     )

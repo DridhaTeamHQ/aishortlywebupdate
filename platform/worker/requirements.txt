@@ -1,0 +1,6 @@
+redis==6.4.0
+rq==2.5.0
+supabase==2.18.1
+cryptography==45.0.7
+python-dotenv==1.1.1
+croniter==6.0.0`n

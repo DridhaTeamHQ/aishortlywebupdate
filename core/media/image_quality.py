@@ -704,9 +704,11 @@ class ImageQualityPipeline:
             b64 = base64.b64encode(image_bytes).decode("ascii")
             prompt = (
                 "You are selecting a CMS hero image for a news article. "
+                "CRITICAL: The image MUST be directly related to the article topic. "
+                "Reject if the image shows people, events, or subjects NOT mentioned in the article title. "
                 "Reject if there is ANY publisher logo, watermark, corner badge, channel bug, signature mark, "
                 "or heavy text overlay anywhere in the image. "
-                "Reject if blurry, low-detail, noisy, poor quality, or visually unrelated to the article. "
+                "Reject if blurry, low-detail, noisy, poor quality. "
                 "Return strict JSON only with keys: usable (bool), quality (0..1), relevance (0..1), is_relevant (bool), "
                 "has_logo (bool), has_watermark (bool), reason (string). "
                 f"Article title: {title[:180]}. Candidate hints: {candidate_context[:140]}. Article context: {article_context[:220]}"
@@ -746,14 +748,10 @@ class ImageQualityPipeline:
                 usable = False
                 reason = "vision_low_quality"
 
-            min_vision_relevance = float(self.thresholds.get("min_vision_relevance", 0.4))
+            min_vision_relevance = float(self.thresholds.get("min_vision_relevance", 0.5))
             if (not is_relevant) or relevance < min_vision_relevance:
-                # Allow strong-quality images with moderate relevance instead of hard rejection.
-                if quality >= 0.68 and relevance >= 0.18 and (not has_logo) and (not has_watermark):
-                    usable = True
-                else:
-                    usable = False
-                    reason = "vision_irrelevant"
+                usable = False
+                reason = "vision_irrelevant"
 
             reason_low = reason.lower()
             if any(tok in reason_low for tok in {"logo", "watermark", "channel bug", "corner bug", "publisher mark"}):
@@ -902,8 +900,9 @@ class ImageQualityPipeline:
         return max(0.0, min(1.0, score))
 
     def _store_image(self, data: bytes, title: str) -> str:
-        safe = re.sub(r"[^a-zA-Z0-9\s-]", "", title)[:40].strip().replace(" ", "_") or "image"
-        path = self.download_dir / f"{safe}.jpg"
+        content_hash = hashlib.sha1(data).hexdigest()[:10]
+        safe = re.sub(r"[^a-zA-Z0-9\s-]", "", title)[:30].strip().replace(" ", "_") or "image"
+        path = self.download_dir / f"{safe}_{content_hash}.jpg"
         path.write_bytes(data)
         return str(path.resolve())
 

@@ -23,7 +23,8 @@ class EventResolver:
         for article in articles:
             placed = False
             for cluster_articles in clusters:
-                if self._is_same_story(article, cluster_articles[0]):
+                # Check against ALL articles in cluster, not just first
+                if any(self._is_same_story(article, existing) for existing in cluster_articles):
                     cluster_articles.append(article)
                     placed = True
                     break
@@ -63,9 +64,17 @@ class EventResolver:
 
         title_ratio = SequenceMatcher(None, self._normalize(a.title), self._normalize(b.title)).ratio()
         content_ratio = self._jaccard(self._normalize(a.body), self._normalize(b.body))
-        return title_ratio >= self.title_similarity or (
-            title_ratio >= self.title_similarity * 0.88 and content_ratio >= self.content_similarity
-        )
+
+        # Strong title match
+        if title_ratio >= self.title_similarity:
+            return True
+        # Moderate title + content match
+        if title_ratio >= self.title_similarity * 0.88 and content_ratio >= self.content_similarity:
+            return True
+        # Content-only match (same story, different headline)
+        if content_ratio >= 0.55:
+            return True
+        return False
 
     def _within_time_window(self, a: IngestedArticle, b: IngestedArticle) -> bool:
         delta = abs(self._parse_time(a) - self._parse_time(b))

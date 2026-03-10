@@ -176,9 +176,8 @@ Return only the category name."""
         if pipeline_hint == "business" and business_signal:
             return "Business"
 
-        if self._is_india_source(source_low):
-            if decided in {"International", "State"}:
-                return heuristic if heuristic in {"National", "Politics", "Telangana", "Andhra Pradesh", "Crime", "Business", "Finance"} else "National"
+        # Removed: source alone should not override category.
+        # India context is now determined purely by text markers.
 
         if not india_context and decided in {"National", "State", "Andhra Pradesh", "Telangana"}:
             if env_signal:
@@ -224,11 +223,11 @@ Return only the category name."""
     def _is_india_context(self, text: str, source_low: str) -> bool:
         india_markers = [
             " india ", " indian ", "new delhi", "delhi", "mumbai", "bengaluru", "kolkata", "chennai", "hyderabad",
-            "times of india", "the hindu", "rajya sabha", "lok sabha", "bihar", "telangana", "andhra pradesh",
+            "rajya sabha", "lok sabha", "bihar", "telangana", "andhra pradesh",
             "west bengal", "maharashtra", "uttar pradesh", "tamil nadu", "kerala", "karnataka", "gujarat",
+            "modi", "bjp", "congress", "rupee", "sensex", "nifty", "bse", "nse",
         ]
-        if self._is_india_source(source_low):
-            return True
+        # Source alone must NOT imply India context — only actual text markers matter.
         return any(marker in text for marker in india_markers)
 
     def _heuristic_decide(self, title: str, body: str, source: str, pipeline_hint: str) -> str:

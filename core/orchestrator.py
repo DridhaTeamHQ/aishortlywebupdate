@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from config.settings import get_settings
 from core.cms import ArticleData, CMSPublisher
@@ -70,6 +70,33 @@ class HardenedOrchestrator:
         self.max_publish_retries = 2
         self.max_login_retries = 2
         self.max_consecutive_publish_failures = 10
+        self._published_titles: set = set()
+        self._cancel_check: Optional[Callable[[], bool]] = None
+        self._event_sink: Optional[Callable[[str, Dict[str, Any]], Awaitable[None] | None]] = None
+
+    def set_runtime_controls(
+        self,
+        cancel_check: Optional[Callable[[], bool]] = None,
+        event_sink: Optional[Callable[[str, Dict[str, Any]], Any]] = None,
+    ) -> None:
+        """Allow the worker to inject cancel checking and event reporting."""
+        self._cancel_check = cancel_check
+        self._event_sink = event_sink
+
+    def _is_cancelled(self) -> bool:
+        if self._cancel_check is not None:
+            return self._cancel_check()
+        return False
+
+    async def _emit_event(self, event_type: str, payload: Dict[str, Any]) -> None:
+        if self._event_sink is None:
+            return
+        try:
+            result = self._event_sink(event_type, payload)
+            if asyncio.iscoroutine(result):
+                await result
+        except Exception:
+            pass
 
     def _normalize_publish_plan(self, raw_plan: List[Dict[str, Any]]) -> List[Dict[str, int | str]]:
         normalized: List[Dict[str, int | str]] = []
@@ -115,10 +142,14 @@ class HardenedOrchestrator:
     async def _run_once(self) -> None:
         metrics = PipelineMetrics()
 
+        await self._emit_event("SCRAPE_STARTED", {})
         by_category = self.ingestion.run()
         metrics.record_category_counts(by_category)
+        total_scraped = 0
         for cat, count in metrics.total_scraped_per_category.items():
             self.logger.info(f"metric.scraped category={cat} count={count}")
+            total_scraped += count
+        await self._emit_event("SCRAPE_DONE", {"total": total_scraped})
 
         all_articles = [item for rows in by_category.values() for item in rows]
         clusters = self.resolver.cluster(all_articles)
@@ -217,6 +248,9 @@ class HardenedOrchestrator:
 
                 published_from_cluster = False
                 for article in cluster_articles:
+                    if self._is_cancelled():
+                        await self._emit_event("RUN_FINISHED", {"status": "cancelled"})
+                        return
                     article_url = str(getattr(article, "url", "")).strip()
                     if not article_url or article_url in attempted_urls:
                         continue
@@ -275,6 +309,7 @@ class HardenedOrchestrator:
             f"metric.image_quality pass={metrics.image_pass_count} fail={metrics.image_fail_count} reasons={dict(metrics.image_fail_reasons)}"
         )
         self.logger.info(f"run_complete published={published} total_candidates={len(cluster_rows)}")
+        await self._emit_event("RUN_FINISHED", {"status": "completed", "published": published})
 
     def _pick_representative(self, articles: List[object]):
         return max(articles, key=lambda a: len(getattr(a, "body", "") or ""), default=None)
@@ -471,14 +506,28 @@ class HardenedOrchestrator:
             return url
         return None
     async def _publish_article(self, article, is_breaking: bool, metrics: PipelineMetrics) -> Tuple[bool, str]:
+        if self._is_cancelled():
+            return False, "cancelled"
+
+        await self._emit_event("STEP_STARTED", {"step": "summarize", "url": article.url})
         summary = self.summarizer.summarize(article.title, article.body)
+        await self._emit_event("STEP_DONE", {"step": "summarize", "url": article.url, "ok": bool(summary)})
         if not summary:
             return False, "summary_failed"
 
+        if self._is_cancelled():
+            return False, "cancelled"
+
+        await self._emit_event("STEP_STARTED", {"step": "telugu", "url": article.url})
         telugu = self.telugu_writer.write(summary["title"], summary["body"])
+        await self._emit_event("STEP_DONE", {"step": "telugu", "url": article.url, "ok": bool(telugu)})
         if not telugu:
             return False, "telugu_failed"
 
+        if self._is_cancelled():
+            return False, "cancelled"
+
+        await self._emit_event("STEP_STARTED", {"step": "image", "url": article.url})
         image_result = self.image_pipeline.select_best(
             article_url=article.url,
             title=article.title,
@@ -487,6 +536,7 @@ class HardenedOrchestrator:
         )
 
         metrics.record_image_result(image_result.passed, image_result.rejection_reasons[0] if image_result.rejection_reasons else "")
+        await self._emit_event("STEP_DONE", {"step": "image", "url": article.url, "ok": bool(image_result.passed)})
 
         if not image_result.passed and not image_result.needs_image:
             self.logger.warning(
@@ -544,7 +594,11 @@ class HardenedOrchestrator:
             },
         )
 
+        if self._is_cancelled():
+            return False, "cancelled"
+        await self._emit_event("STEP_STARTED", {"step": "publish", "url": article.url})
         workflow_ok = await self._execute_browser_workflow(data, article.url)
+        await self._emit_event("STEP_DONE", {"step": "publish", "url": article.url, "ok": bool(workflow_ok)})
         if workflow_ok:
             return True, ""
         return False, "workflow_failed"

@@ -1,0 +1,106 @@
+services:
+  - type: web
+    name: agent-platform-web
+    env: node
+    rootDir: web
+    buildCommand: npm install && npm run build
+    startCommand: npm run start
+    plan: starter
+    envVars:
+      - key: NEXT_PUBLIC_SUPABASE_URL
+        sync: false
+      - key: NEXT_PUBLIC_SUPABASE_ANON_KEY
+        sync: false
+      - key: NEXT_PUBLIC_API_BASE_URL
+        sync: false
+
+  - type: web
+    name: agent-platform-api
+    env: python
+    rootDir: platform/api
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    plan: starter
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: agent-platform-redis
+          property: connectionString
+      - key: RQ_QUEUE_NAME
+        value: agent-runs
+      - key: PLATFORM_ENCRYPTION_KEY
+        generateValue: true
+      - key: BROWSER_STREAM_BASE_URL
+        sync: false
+
+  - type: worker
+    name: agent-platform-worker
+    env: python
+    rootDir: .
+    buildCommand: pip install -r platform/worker/requirements.txt && pip install -r requirements.txt
+    startCommand: python platform/worker/worker.py
+    plan: starter
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: agent-platform-redis
+          property: connectionString
+      - key: RQ_QUEUE_NAME
+        value: agent-runs
+      - key: PLATFORM_ENCRYPTION_KEY
+        sync: false
+      - key: BROWSER_STREAM_BASE_URL
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: CMS_URL
+        sync: false
+      - key: CMS_EMAIL
+        sync: false
+      - key: CMS_PASSWORD
+        sync: false
+
+  - type: web
+    name: agent-platform-browser-stream
+    env: python
+    rootDir: platform/browser-stream
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    plan: starter
+
+  - type: redis
+    name: agent-platform-redis
+    plan: starter
+
+
+  - type: worker
+    name: agent-platform-scheduler
+    env: python
+    rootDir: .
+    buildCommand: pip install -r platform/worker/requirements.txt
+    startCommand: python platform/worker/scheduler.py
+    plan: starter
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: agent-platform-redis
+          property: connectionString
+      - key: RQ_QUEUE_NAME
+        value: agent-runs
