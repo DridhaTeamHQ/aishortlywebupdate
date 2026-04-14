@@ -14,9 +14,12 @@ class Settings:
 
 
 def get_settings() -> Settings:
+    supabase_url = os.getenv("SUPABASE_URL", "").strip() or os.getenv("NEXT_PUBLIC_SUPABASE_URL", "").strip()
+    supabase_anon_key = os.getenv("SUPABASE_ANON_KEY", "").strip() or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "").strip()
+
     return Settings(
-        supabase_url=os.getenv("SUPABASE_URL", "").strip(),
-        supabase_anon_key=os.getenv("SUPABASE_ANON_KEY", "").strip(),
+        supabase_url=supabase_url,
+        supabase_anon_key=supabase_anon_key,
         supabase_service_role_key=os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip(),
         redis_url=os.getenv("REDIS_URL", "redis://localhost:6379/0").strip(),
         encryption_key=os.getenv("PLATFORM_ENCRYPTION_KEY", "").strip(),
