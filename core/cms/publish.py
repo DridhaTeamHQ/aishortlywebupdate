@@ -19,9 +19,9 @@ from utils.logger import get_logger
 class ArticleData:
     english_title: str
     english_body: str
-    telugu_title: str
-    telugu_body: str
     category: str
+    telugu_title: str = ""
+    telugu_body: str = ""
     image_search_query: str = ""
     image_alt: str = ""
     hashtag: str = "#news #trending"
@@ -52,7 +52,7 @@ class CMSPublisher:
         self.cms_url = os.getenv("CMS_URL", "")
         self.cms_email = os.getenv("CMS_EMAIL", "")
         self.cms_password = os.getenv("CMS_PASSWORD", "")
-        self.cms_role = os.getenv("CMS_ROLE", "State Sub Editor")
+        self.cms_role = os.getenv("CMS_ROLE", "Content Writer")
 
         self.playwright = None
         self.browser: Optional[Browser] = None
@@ -69,6 +69,7 @@ class CMSPublisher:
         self.browser = await self.playwright.chromium.launch(headless=False, slow_mo=200)
         self.context = await self.browser.new_context(viewport={"width": 1400, "height": 900})
         self.page = await self.context.new_page()
+        self._attach_page_debug_listeners()
         self.image_finder = GoogleImageFinder(self.page)
         self.page.set_default_timeout(self.TIMEOUT)
 
@@ -83,6 +84,43 @@ class CMSPublisher:
         except Exception as exc:
             self.logger.warning(f"Error stopping browser: {exc}")
 
+    async def ensure_live_page(self) -> bool:
+        try:
+            if self.playwright is None:
+                self.playwright = await async_playwright().start()
+            if self.browser is None or not self.browser.is_connected():
+                self.browser = await self.playwright.chromium.launch(headless=False, slow_mo=200)
+
+            recreate_context = self.context is None or self.page is None or self.page.is_closed()
+            if recreate_context:
+                try:
+                    if self.context:
+                        await self.context.close()
+                except Exception:
+                    pass
+                self.context = await self.browser.new_context(viewport={"width": 1400, "height": 900})
+                self.page = await self.context.new_page()
+                self._attach_page_debug_listeners()
+                self.page.set_default_timeout(self.TIMEOUT)
+                self.image_finder = GoogleImageFinder(self.page)
+                self.logged_in = False
+            return True
+        except Exception as exc:
+            self.logger.error(f"Browser recovery failed: {exc}")
+            return False
+
+    def _attach_page_debug_listeners(self) -> None:
+        if self.page is None:
+            return
+
+        self.page.on(
+            "console",
+            lambda msg: self.logger.info(f"Playwright console[{msg.type}]: {msg.text}")
+        )
+        self.page.on(
+            "pageerror",
+            lambda exc: self.logger.error(f"Playwright pageerror: {exc}")
+        )
     async def _wait_stable(self):
         if self.page is None:
             return
@@ -133,10 +171,15 @@ class CMSPublisher:
             return False
 
         checks = [
+            self.page.get_by_text("Create New Article").first,
+            self.page.get_by_text("English Title").first,
+            self.page.get_by_text("English Content").first,
+            self.page.get_by_text("Keywords").first,
+            self.page.get_by_text("Media Type").first,
             self.page.locator("#title_en").first,
             self.page.locator("#content_en").first,
-            self.page.locator("textarea[data-testid='rt-input-component']").first,
-            self.page.locator("text='Media *'").first,
+            self.page.locator("input[placeholder*='English title' i]").first,
+            self.page.locator("textarea[placeholder*='English content' i]").first,
             self.page.locator("input[type='file']").first,
         ]
         for loc in checks:
@@ -201,8 +244,195 @@ class CMSPublisher:
             self.logger.warning(f"Failed clicking {name}: {exc}")
             return False
 
-    async def login(self) -> bool:
+    async def _click_locator(self, locator, name: str) -> bool:
+        if locator is None:
+            return False
+        try:
+            if await locator.count() == 0:
+                return False
+            await locator.scroll_into_view_if_needed()
+        except Exception:
+            pass
+        try:
+            await locator.click(force=True)
+            await asyncio.sleep(0.5)
+            return True
+        except Exception as exc:
+            self.logger.warning(f"Failed clicking {name}: {exc}")
+            return False
+
+    async def _scroll_locator_into_view(self, locator) -> bool:
+        if locator is None:
+            return False
+        try:
+            if await locator.count() == 0:
+                return False
+            await locator.scroll_into_view_if_needed()
+            await asyncio.sleep(0.25)
+            return True
+        except Exception:
+            return False
+
+    async def _scroll_modal_by(self, delta: int = 700) -> bool:
         if self.page is None:
+            return False
+
+        candidates = [
+            self.page.locator("[role='dialog']").first,
+            self.page.locator(
+                "xpath=(//*[contains(@class,'overflow-y-auto') or contains(@class,'overflow-auto')][.//*[contains(normalize-space(), 'English Title')]])[1]"
+            ).first,
+            self.page.locator(
+                "xpath=(//*[contains(@class,'overflow-y-auto') or contains(@class,'overflow-auto')])[last()]"
+            ).first,
+        ]
+
+        for candidate in candidates:
+            try:
+                if await candidate.count() > 0 and await candidate.is_visible(timeout=300):
+                    await candidate.evaluate("(el, amount) => { el.scrollTop = el.scrollTop + amount; }", delta)
+                    await asyncio.sleep(0.25)
+                    return True
+            except Exception:
+                continue
+
+        try:
+            await self.page.mouse.wheel(0, delta)
+            await asyncio.sleep(0.25)
+            return True
+        except Exception:
+            return False
+
+    async def _scroll_form_to_section(self, label: str) -> bool:
+        if self.page is None:
+            return False
+
+        escaped = re.escape(label)
+        candidates = [
+            self.page.get_by_text(label, exact=True).first,
+            self.page.locator(f"xpath=//*[normalize-space()='{label}']").first,
+            self.page.locator(f"xpath=//*[contains(normalize-space(), '{label}')]").first,
+            self.page.locator(f"text=/{escaped}/i").first,
+        ]
+
+        for candidate in candidates:
+            if await self._scroll_locator_into_view(candidate):
+                return True
+
+        for _ in range(3):
+            if await self._scroll_modal_by(500):
+                for candidate in candidates:
+                    if await self._scroll_locator_into_view(candidate):
+                        return True
+        return False
+
+    async def _find_clickable_ancestor(self, label: str, scope_selector: str = "aside nav"):
+        if self.page is None:
+            return None
+
+        scope = self.page.locator(scope_selector).first
+        candidates = [
+            scope.get_by_text(label, exact=True).first.locator(
+                "xpath=ancestor::*[contains(@class,'cursor-pointer')][1]"
+            ),
+            scope.get_by_text(label, exact=True).first.locator("xpath=ancestor::button[1]"),
+            scope.get_by_text(label, exact=True).first.locator("xpath=ancestor::a[1]"),
+            scope.get_by_text(label, exact=True).first,
+        ]
+        for candidate in candidates:
+            try:
+                if await candidate.count() > 0 and await candidate.is_visible(timeout=1200):
+                    return candidate.first
+            except Exception:
+                continue
+        return None
+
+    async def _find_first_visible_in_scope(self, scope, selectors, timeout_ms: int = 1200):
+        if scope is None:
+            return await self._find_first_visible(selectors, timeout_ms=timeout_ms)
+
+        for selector in selectors:
+            try:
+                loc = scope.locator(selector).first
+                if await loc.count() > 0 and await loc.is_visible(timeout=timeout_ms):
+                    return loc
+            except Exception:
+                continue
+        return None
+
+    async def _article_form_scope(self):
+        if self.page is None:
+            return None
+
+        candidates = [
+            self.page.locator("[role='dialog']").filter(has=self.page.get_by_text("Create New Article")).first,
+            self.page.locator("[role='dialog']").first,
+        ]
+        for candidate in candidates:
+            try:
+                if await candidate.count() > 0 and await candidate.is_visible(timeout=700):
+                    return candidate
+            except Exception:
+                continue
+        return self.page
+
+    async def _is_sidebar_item_visible(self, label: str) -> bool:
+        if self.page is None:
+            return False
+        try:
+            loc = self.page.locator("aside nav").first.get_by_text(label, exact=True).first
+            return await loc.count() > 0 and await loc.is_visible(timeout=900)
+        except Exception:
+            return False
+
+    async def _open_articles_management(self) -> bool:
+        if self.page is None:
+            return False
+
+        if await self._is_articles_page():
+            return True
+
+        if not await self._is_sidebar_item_visible("Articles"):
+            content_item = await self._find_clickable_ancestor("Content")
+            if not await self._click_locator(content_item, "Content menu"):
+                return False
+            await self._wait_stable()
+
+        articles_item = await self._find_clickable_ancestor("Articles")
+        if not await self._click_locator(articles_item, "Articles menu"):
+            return False
+
+        for _ in range(10):
+            await self._wait_stable()
+            if await self._is_articles_page():
+                return True
+            await asyncio.sleep(0.2)
+        return False
+
+    async def _open_create_article_modal(self) -> bool:
+        if self.page is None:
+            return False
+
+        if await self._is_article_form_open():
+            return True
+
+        create_candidates = [
+            self.page.get_by_role("button", name=re.compile(r"create article", re.I)).first,
+            self.page.locator("main").get_by_role("button", name=re.compile(r"create article", re.I)).first,
+            self.page.locator("button:has-text('Create Article')").first,
+            self.page.locator("text='Create Article'").first.locator(
+                "xpath=ancestor::*[self::button or self::a][1]"
+            ),
+        ]
+        for candidate in create_candidates:
+            if await self._click_locator(candidate, "Create Article button"):
+                await self._wait_stable()
+                if await self._is_article_form_open():
+                    return True
+        return False
+
+    async def login(self) -> bool:
+        if not await self.ensure_live_page():
             return False
 
         try:
@@ -287,7 +517,7 @@ class CMSPublisher:
         return False
 
     async def create_article(self) -> bool:
-        if self.page is None:
+        if not await self.ensure_live_page():
             return False
 
         if await self._is_article_form_open():
@@ -296,56 +526,23 @@ class CMSPublisher:
         for attempt in range(3):
             await self._wait_stable()
 
-            await self._click_first(
-                [
-                    "button:has-text('Content')",
-                    "a:has-text('Content')",
-                    "text='Content'",
-                ],
-                "Content menu",
-            )
-
-            await self._click_first(
-                [
-                    "a:has-text('Articles')",
-                    "button:has-text('Articles')",
-                    "text='Articles'",
-                ],
-                "Articles menu",
-            )
-            await self._wait_stable()
-
-            if await self._is_article_form_open():
-                return True
-
-            if await self._is_articles_page():
-                clicked = await self._click_first(
-                    [
-                        "button:has-text('Create Article')",
-                        "a:has-text('Create Article')",
-                        "button:has-text('Create')",
-                        "a:has-text('Create')",
-                        "button:has-text('New Article')",
-                        "a:has-text('New Article')",
-                        "text='Create Article'",
-                    ],
-                    "Create Article button",
-                    timeout_ms=2000,
-                )
-                if clicked:
-                    await self._wait_stable()
-                    if await self._is_article_form_open():
-                        return True
-
+            if await self._open_articles_management():
+                if await self._open_create_article_modal():
+                    return True
                 if await self._open_create_route_from_link():
                     return True
                 if await self._open_create_route_direct():
                     return True
 
             await self._dump_debug(f"create_article_attempt_{attempt + 1}")
-            if self.page:
-                await self.page.reload(wait_until="domcontentloaded")
-                await asyncio.sleep(1)
+            if self.page and not self.page.is_closed():
+                try:
+                    await self.page.reload(wait_until="domcontentloaded")
+                    await asyncio.sleep(1)
+                except Exception as exc:
+                    self.logger.warning(f"Create article reload failed: {exc}")
+            elif not await self.ensure_live_page():
+                return False
 
         self.logger.error("Navigation error: unable to reach Create Article form")
         return False
@@ -371,16 +568,43 @@ class CMSPublisher:
         except Exception:
             return False
 
+    async def _find_english_title_field(self):
+        if self.page is None:
+            return None
+        scope = await self._article_form_scope()
+        selectors = [
+            "#title_en",
+            "input[placeholder*='English title' i]",
+            "xpath=.//label[contains(normalize-space(), 'English Title')]/following::input[1]",
+            "input[data-testid='rt-input-component']",
+        ]
+        return await self._find_first_visible_in_scope(scope, selectors, timeout_ms=900)
+
+    async def _find_english_body_field(self):
+        if self.page is None:
+            return None
+        scope = await self._article_form_scope()
+        selectors = [
+            "#content_en",
+            "textarea[placeholder*='English content' i]",
+            "xpath=.//label[contains(normalize-space(), 'English Content')]/following::textarea[1]",
+            "textarea[data-testid='rt-input-component']",
+        ]
+        return await self._find_first_visible_in_scope(scope, selectors, timeout_ms=900)
+
     async def _select_category(self, category: str) -> bool:
         if self.page is None:
             return False
+        scope = await self._article_form_scope()
 
         async def _open_dropdown():
             candidates = [
-                self.page.locator("//label[contains(normalize-space(), 'Category')]/following::button[@role='combobox'][1]").first,
-                self.page.locator("button:has-text('Select category')").first,
-                self.page.locator("button:has-text('Select')").last,
-                self.page.locator("[role='combobox']").last,
+                scope.locator("xpath=.//label[contains(normalize-space(), 'Category')]/following::button[@role='combobox'][1]").first,
+                scope.locator("xpath=.//label[contains(normalize-space(), 'Category')]/following::*[@role='combobox'][1]").first,
+                scope.locator("button:has-text('Select category')").first,
+                scope.locator("xpath=.//*[contains(normalize-space(), 'Select category')]").first,
+                scope.locator("button:has-text('Select')").last,
+                scope.locator("[role='combobox']").last,
             ]
             for c in candidates:
                 try:
@@ -388,6 +612,26 @@ class CMSPublisher:
                         await c.click(force=True)
                         await asyncio.sleep(0.4)
                         return c
+                except Exception:
+                    continue
+            return None
+
+        async def _find_category_option(name: str):
+            escaped = re.escape(name)
+            candidates = [
+                self.page.get_by_role("option", name=re.compile(rf"^\s*{escaped}\s*$", re.I)).first,
+                self.page.locator(
+                    f"xpath=(//*[@role='listbox']//*[normalize-space()='{name}'])[1]"
+                ).first,
+                self.page.locator(
+                    f"xpath=((//*[contains(@class,'overflow-y-auto') or contains(@class,'overflow-auto')])[last()]//*[normalize-space()='{name}'])[1]"
+                ).first,
+                self.page.locator(f"text=/{escaped}/i").last,
+            ]
+            for candidate in candidates:
+                try:
+                    if await candidate.count() > 0:
+                        return candidate
                 except Exception:
                     continue
             return None
@@ -408,15 +652,15 @@ class CMSPublisher:
                 chosen = None
 
                 for name in desired:
-                    exact = self.page.get_by_role("option", name=re.compile(rf"^\\s*{re.escape(name)}\\s*$", re.I)).first
-                    if await exact.count() > 0:
+                    exact = await _find_category_option(name)
+                    if exact is not None:
+                        await self._scroll_locator_into_view(exact)
                         try:
-                            await exact.scroll_into_view_if_needed()
+                            await exact.click(force=True)
+                            chosen = name
+                            break
                         except Exception:
-                            pass
-                        await exact.click(force=True)
-                        chosen = name
-                        break
+                            continue
 
                 if chosen is None:
                     for name in desired:
@@ -448,13 +692,16 @@ class CMSPublisher:
     async def _upload_image(self, image_path: str) -> bool:
         if self.page is None:
             return False
+        scope = await self._article_form_scope()
 
         try:
-            chooser = self.page.locator("input[type='file']").first
+            await self._scroll_form_to_section("Media")
+            await self._ensure_media_type_image()
+            chooser = scope.locator("input[type='file']").first
             if await chooser.count() == 0:
                 await self._click_first(["text='Choose File'", "button:has-text('Choose File')"], "Choose File")
                 await asyncio.sleep(0.8)
-                chooser = self.page.locator("input[type='file']").first
+                chooser = scope.locator("input[type='file']").first
 
             if await chooser.count() == 0:
                 self.logger.error("File input not found in CMS form")
@@ -481,6 +728,43 @@ class CMSPublisher:
             self.logger.error(f"Image upload failed: {exc}")
             await self._dump_debug("image_upload_error")
             return False
+
+    async def _ensure_media_type_image(self) -> bool:
+        if self.page is None:
+            return False
+        scope = await self._article_form_scope()
+
+        try:
+            await self._scroll_form_to_section("Media")
+            trigger = await self._find_first_visible_in_scope(
+                scope,
+                [
+                    "xpath=.//label[contains(normalize-space(), 'Media Type')]/following::*[@role='combobox'][1]",
+                    "xpath=.//label[contains(normalize-space(), 'Media Type')]/following::button[1]",
+                    "xpath=.//label[contains(normalize-space(), 'Media Type')]/following::div[contains(., 'Image')][1]",
+                ],
+                timeout_ms=700,
+            )
+            if trigger is None:
+                return False
+
+            try:
+                current = (await trigger.inner_text()).strip().lower()
+                if "image" in current:
+                    return True
+            except Exception:
+                pass
+
+            await trigger.click(force=True)
+            await asyncio.sleep(0.4)
+            option = self.page.get_by_role("option", name=re.compile(r"^\s*Image\s*$", re.I)).first
+            if await option.count() > 0:
+                await option.click(force=True)
+                await asyncio.sleep(0.4)
+                return True
+        except Exception:
+            return False
+        return False
 
 
     async def _download_article_image(self, image_url: str, title: str) -> Optional[str]:
@@ -532,78 +816,95 @@ class CMSPublisher:
                 return str(out_path.resolve())
         except Exception:
             return None
-    async def _find_hashtag_field(self):
+    async def _find_keywords_field(self):
         if self.page is None:
             return None
+        scope = await self._article_form_scope()
 
         selectors = [
-            "#hashtag",
-            "input[name='hashtag']",
-            "textarea[name='hashtag']",
-            "xpath=//label[contains(normalize-space(), 'Hashtag')]/following::input[1]",
-            "xpath=//label[contains(normalize-space(), 'Hashtag')]/following::textarea[1]",
+            "xpath=.//label[contains(normalize-space(), 'Keywords')]/following::input[1]",
+            "xpath=.//label[contains(normalize-space(), 'Keywords')]/following::textarea[1]",
+            "input[placeholder*='keyword' i]",
         ]
-        for selector in selectors:
-            try:
-                loc = self.page.locator(selector).first
-                if await loc.count() > 0 and await loc.is_visible(timeout=900):
-                    return loc
-            except Exception:
-                continue
-        return None
+        return await self._find_first_visible_in_scope(scope, selectors, timeout_ms=900)
 
-    async def _fill_hashtag(self, hashtag: str) -> bool:
-        field = await self._find_hashtag_field()
+    async def _fill_keywords(self, hashtag: str) -> bool:
+        await self._scroll_form_to_section("Keywords")
+        field = await self._find_keywords_field()
         if field is None:
             return False
 
-        normalized = " ".join((hashtag or "").split()).strip()
-        if not normalized.startswith("#"):
-            normalized = f"#news {normalized}".strip()
-
-        if len(normalized) > 120:
-            normalized = normalized[:120].rstrip()
-
-        if await self._fill_react_input(field, normalized):
-            self.logger.info(f"Hashtag set: {normalized}")
-            return True
-
         try:
-            await field.fill("")
-            await field.fill(normalized)
-            await asyncio.sleep(0.3)
-            value = await field.input_value()
-            ok = normalized in value or value.strip() == normalized
-            if ok:
-                self.logger.info(f"Hashtag set: {value.strip()}")
-            return ok
+            raw_tokens = re.split(r"[\s,]+", (hashtag or "").strip())
+            tokens = []
+            seen = set()
+            for token in raw_tokens:
+                clean = token.strip().lstrip("#").strip()
+                if not clean:
+                    continue
+                lowered = clean.lower()
+                if lowered in seen:
+                    continue
+                seen.add(lowered)
+                tokens.append(clean)
+                if len(tokens) >= 10:
+                    break
+
+            if not tokens:
+                tokens = ["news"]
+
+            for token in tokens:
+                await self._scroll_locator_into_view(field)
+                await field.click(force=True)
+                await asyncio.sleep(0.1)
+                await field.fill("")
+                await asyncio.sleep(0.05)
+                await field.type(token, delay=20)
+                await asyncio.sleep(0.15)
+                await field.press("Enter")
+                await asyncio.sleep(0.2)
+
+            self.logger.info(f"Keywords set: {tokens}")
+            return True
         except Exception:
             return False
 
     async def fill_form(self, data: ArticleData) -> bool:
-        if self.page is None:
+        if not await self.ensure_live_page():
             return False
 
         try:
+            self.logger.info(
+                "Submitting ArticleData title_len=%s body_len=%s category=%s image_search=%s",
+                len(data.english_title or ""),
+                len(data.english_body or ""),
+                data.category,
+                bool(data.image_search_query),
+            )
             if not await self._is_article_form_open():
                 self.logger.error("Form not open before fill")
                 return False
 
-            if not await self._fill_react_input(self.page.locator("input[data-testid='rt-input-component']").first, data.telugu_title):
-                return False
-            if not await self._fill_react_input(self.page.locator("#title_en").first, data.english_title):
-                return False
-            if not await self._fill_react_input(self.page.locator("textarea[data-testid='rt-input-component']").first, data.telugu_body):
-                return False
-            if not await self._fill_react_input(self.page.locator("#content_en").first, data.english_body):
+            title_field = await self._find_english_title_field()
+            body_field = await self._find_english_body_field()
+            if title_field is None or body_field is None:
+                self.logger.error("English content fields not found")
                 return False
 
+            if not await self._fill_react_input(title_field, data.english_title):
+                return False
+            if not await self._fill_react_input(body_field, data.english_body):
+                return False
+            self.logger.info("ArticleData English fields injected into CMS form")
+
+            await self._scroll_form_to_section("Category")
             if not await self._select_category(data.category):
                 self.logger.error("Category selection failed")
                 return False
 
-            if not await self._fill_hashtag(data.hashtag):
-                self.logger.error("Hashtag fill failed")
+            await self._scroll_form_to_section("Keywords")
+            if not await self._fill_keywords(data.hashtag):
+                self.logger.error("Keywords fill failed")
                 return False
 
             image_path = data.image_path if data.image_path and os.path.exists(data.image_path) else None
@@ -611,11 +912,20 @@ class CMSPublisher:
                 self.logger.info("Image path missing, trying article image URL fallback")
                 image_path = await self._download_article_image(data.image_url, data.english_title)
 
+            if (
+                (not image_path or not os.path.exists(image_path))
+                and data.image_search_query
+                and self.image_finder is not None
+            ):
+                self.logger.info(f"Image path missing, trying search fallback: {data.image_search_query}")
+                image_path = await self.image_finder.find_and_download(data.image_search_query)
+
             if not image_path or not os.path.exists(image_path):
                 self.logger.warning("Image path missing while filling form")
                 return False
 
             data.image_path = image_path
+            await self._scroll_form_to_section("Media")
             if not await self._upload_image(image_path):
                 return False
 
@@ -624,33 +934,209 @@ class CMSPublisher:
             self.logger.error(f"Form error: {exc}")
             await self._dump_debug("form_fill_error")
             return False
+
+    @staticmethod
+    def _publish_candidate_rank(meta: Dict[str, Any]) -> int:
+        text = re.sub(r"\s+", " ", str(meta.get("text", ""))).strip().lower()
+        if not text or not re.search(r"publish|submit|save|review", text):
+            return -1
+
+        role = str(meta.get("role", "")).strip().lower()
+        control_type = str(meta.get("type", "")).strip().lower()
+        aria_has_popup = str(meta.get("aria_has_popup", "")).strip().lower()
+        nearby_text = re.sub(r"\s+", " ", str(meta.get("ancestor_text", ""))).strip().lower()
+
+        if meta.get("is_disabled") or meta.get("is_listbox_item"):
+            return -1
+        if role == "combobox" or aria_has_popup == "listbox":
+            return -1
+
+        score = 0
+        if "submit for review" in text:
+            score += 150
+        elif "publish article" in text:
+            score += 120
+        elif text == "publish":
+            score += 50
+        elif "publish" in text:
+            score += 40
+        elif "review" in text:
+            score += 35
+        elif "submit" in text:
+            score += 25
+        elif "save" in text:
+            score += 10
+
+        if control_type == "submit":
+            score += 30
+        if meta.get("in_form"):
+            score += 15
+        if meta.get("within_dialog"):
+            score += 10
+        if "approval status" in nearby_text and text == "publish":
+            score -= 60
+
+        top = float(meta.get("top") or 0)
+        left = float(meta.get("left") or 0)
+        bottom = float(meta.get("bottom") or 0)
+        viewport_height = float(meta.get("viewport_height") or 0)
+        viewport_width = float(meta.get("viewport_width") or 0)
+
+        if viewport_height and top > viewport_height * 0.55:
+            score += 25
+        if viewport_height and bottom > viewport_height * 0.85:
+            score += 10
+        if viewport_width and left > viewport_width * 0.45:
+            score += 10
+
+        return score
+
+    async def _dismiss_transient_overlays(self):
+        if self.page is None:
+            return
+
+        overlay_selectors = [
+            "[role='listbox']",
+            "[role='menu']",
+            "[data-radix-popper-content-wrapper]",
+        ]
+
+        for _ in range(2):
+            overlay_visible = False
+            for selector in overlay_selectors:
+                try:
+                    loc = self.page.locator(selector).first
+                    if await loc.count() > 0 and await loc.is_visible(timeout=150):
+                        overlay_visible = True
+                        break
+                except Exception:
+                    continue
+
+            if not overlay_visible:
+                return
+
+            try:
+                await self.page.keyboard.press("Escape")
+                await asyncio.sleep(0.25)
+            except Exception:
+                return
+
+    async def _inspect_publish_candidate(self, locator) -> Optional[Dict[str, Any]]:
+        try:
+            if await locator.count() == 0 or not await locator.is_visible(timeout=300):
+                return None
+            meta = await locator.evaluate(
+                """(el) => {
+                    const normalize = (value) => (value || '').replace(/\\s+/g, ' ').trim();
+                    const rect = el.getBoundingClientRect();
+                    const ancestorText = [];
+                    let node = el.parentElement;
+                    for (let depth = 0; depth < 2 && node; depth += 1, node = node.parentElement) {
+                        ancestorText.push(normalize(node.innerText || '').slice(0, 140));
+                    }
+                    return {
+                        text: normalize(el.innerText || el.textContent || el.value || ''),
+                        role: normalize(el.getAttribute('role') || ''),
+                        type: normalize(el.getAttribute('type') || ''),
+                        aria_has_popup: normalize(el.getAttribute('aria-haspopup') || ''),
+                        ancestor_text: ancestorText.join(' '),
+                        within_dialog: !!el.closest('[role="dialog"]'),
+                        in_form: !!el.closest('form'),
+                        is_disabled: !!el.disabled || el.getAttribute('aria-disabled') === 'true',
+                        is_listbox_item: !!el.closest('[role="listbox"], [role="option"], [role="menu"], [data-radix-popper-content-wrapper]'),
+                        top: rect.top,
+                        left: rect.left,
+                        bottom: rect.bottom,
+                        viewport_height: window.innerHeight || 0,
+                        viewport_width: window.innerWidth || 0,
+                    };
+                }"""
+            )
+            if not isinstance(meta, dict):
+                return None
+            return meta
+        except Exception:
+            return None
+
+    async def _pick_best_publish_candidate(self, selector: str, limit: int = 8):
+        if self.page is None:
+            return None
+
+        try:
+            locator = self.page.locator(selector)
+            count = min(await locator.count(), limit)
+        except Exception:
+            return None
+
+        best = None
+        best_meta = None
+        best_score = -1
+
+        for index in range(count):
+            candidate = locator.nth(index)
+            meta = await self._inspect_publish_candidate(candidate)
+            if meta is None:
+                continue
+            score = self._publish_candidate_rank(meta)
+            if score > best_score:
+                best = candidate
+                best_meta = meta
+                best_score = score
+
+        if best is None or best_score < 0:
+            return None
+        return best, best_meta, best_score
+
     async def _find_publish_button(self):
         if self.page is None:
             return None
 
+        await self._dismiss_transient_overlays()
+
         selectors = [
-            "button:has-text('Publish')",
+            "button:has-text('Submit for Review')",
+            "[role='dialog'] button:has-text('Submit for Review')",
+            "button[type='submit']:has-text('Submit for Review')",
             "button:has-text('Publish Article')",
+            "[role='dialog'] button:has-text('Publish Article')",
+            "button[type='submit']:has-text('Publish Article')",
+            "[data-testid='publish-button']",
+            "[role='dialog'] button[type='submit']",
+            "button[type='submit']:has-text('Publish')",
             "button:has-text('Submit')",
             "button:has-text('Save')",
-            "button[type='submit']:has-text('Publish')",
-            "[data-testid='publish-button']",
+            "button:has-text('Publish')",
         ]
 
-        for sel in selectors:
-            try:
-                loc = self.page.locator(sel).first
-                if await loc.count() > 0 and await loc.is_visible(timeout=800):
-                    return loc
-            except Exception:
-                continue
+        best = None
+        best_meta = None
+        best_score = -1
 
-        try:
-            role_button = self.page.get_by_role("button", name=re.compile(r"publish|submit|save", re.I)).first
-            if await role_button.count() > 0 and await role_button.is_visible(timeout=800):
-                return role_button
-        except Exception:
-            pass
+        for sel in selectors:
+            result = await self._pick_best_publish_candidate(sel)
+            if result is None:
+                continue
+            candidate, meta, score = result
+            if score > best_score:
+                best = candidate
+                best_meta = meta
+                best_score = score
+
+        generic = await self._pick_best_publish_candidate("button, [role='button'], input[type='submit']", limit=40)
+        if generic is not None:
+            candidate, meta, score = generic
+            if score > best_score:
+                best = candidate
+                best_meta = meta
+                best_score = score
+
+        if best is not None and best_meta is not None:
+            self.logger.info(
+                "Publish target chosen: text=%r score=%s",
+                best_meta.get("text", ""),
+                best_score,
+            )
+            return best
 
         return None
 
@@ -664,7 +1150,7 @@ class CMSPublisher:
                 if await self._is_articles_page() and not await self._is_article_form_open():
                     return True
 
-                if await self.page.locator("text=/published|success|created/i").first.is_visible(timeout=200):
+                if await self.page.locator("text=/published|success|created|review/i").first.is_visible(timeout=200):
                     return True
             except Exception:
                 pass
@@ -672,7 +1158,7 @@ class CMSPublisher:
         return False
 
     async def publish(self) -> bool:
-        if self.page is None:
+        if not await self.ensure_live_page():
             return False
 
         try:
@@ -681,10 +1167,11 @@ class CMSPublisher:
 
             btn = None
             for _ in range(8):
+                await self._scroll_form_to_section("Submit for Review")
                 btn = await self._find_publish_button()
                 if btn is not None:
                     break
-                await self.page.mouse.wheel(0, 900)
+                await self._scroll_modal_by(900)
                 await asyncio.sleep(0.4)
 
             if btn is None:
@@ -709,6 +1196,9 @@ class CMSPublisher:
 
     async def verify_publish(self) -> bool:
         return await self._wait_publish_success()
+
+
+
 
 
 

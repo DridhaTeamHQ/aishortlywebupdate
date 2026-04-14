@@ -119,6 +119,12 @@ class TheHinduScraper:
         return None
 
     def _extract_body(self, html: str) -> Optional[str]:
+        p_pattern = r'<p[^>]*>(.*?)</p>'
+        paragraphs = re.findall(p_pattern, html, re.DOTALL)
+        valid = [re.sub(r'<[^>]+>', '', p).strip() for p in paragraphs if len(re.sub(r'<[^>]+>', '', p).strip()) > 50]
+        if len(valid) >= 3 or len(" ".join(valid[:8])) > 260:
+            return ' '.join(valid[:8])
+
         patterns = [
             r'<meta\s+property="og:description"\s+content="([^"]+)"',
             r'<meta\s+content="([^"]+)"\s+property="og:description"',
@@ -130,11 +136,8 @@ class TheHinduScraper:
                 body = match.group(1).strip()
                 if len(body) > 100:
                     return body
-        p_pattern = r'<p[^>]*>(.*?)</p>'
-        paragraphs = re.findall(p_pattern, html, re.DOTALL)
-        valid = [re.sub(r'<[^>]+>', '', p).strip() for p in paragraphs if len(re.sub(r'<[^>]+>', '', p).strip()) > 50]
         if valid:
-            return ' '.join(valid[:4])
+            return ' '.join(valid[:8])
         return None
 
     def _extract_og_image(self, html: str) -> Optional[str]:

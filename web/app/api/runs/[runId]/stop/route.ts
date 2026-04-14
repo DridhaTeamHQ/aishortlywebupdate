@@ -2,40 +2,84 @@ import { NextResponse } from 'next/server';
 import { getServiceClient, getUserFromRequest } from '../../../../../lib/supabase-server';
 
 export async function POST(
-    request: Request,
-    { params }: { params: { runId: string } }
+  request: Request,
+  { params }: { params: { runId: string } },
 ) {
-    try {
-        const user = await getUserFromRequest(request);
-        if (!user) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-        }
-
-        const sb = getServiceClient();
-
-        // Only running runs can be stopped
-        const { data: run } = await sb
-            .from('agent_runs')
-            .select('id, status')
-            .eq('id', params.runId)
-            .in('status', ['queued', 'running'])
-            .single();
-
-        if (!run) {
-            return NextResponse.json({ error: 'Run not stoppable or not found' }, { status: 409 });
-        }
-
-        const { error } = await sb
-            .from('agent_runs')
-            .update({ status: 'stopping' })
-            .eq('id', params.runId);
-
-        if (error) {
-            return NextResponse.json({ error: error.message }, { status: 500 });
-        }
-
-        return NextResponse.json({ run_id: params.runId, status: 'stopping' });
-    } catch (err: any) {
-        return NextResponse.json({ error: err.message }, { status: 500 });
+  try {
+    const user = await getUserFromRequest(request);
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+
+    const sb = getServiceClient();
+    const runId = params.runId;
+    const { searchParams } = new URL(request.url);
+    const forceCancel = searchParams.get('force') === '1';
+
+    const { data: run } = await sb
+      .from('agent_runs')
+      .select('id, status, created_by, agent_id')
+      .eq('id', runId)
+      .eq('created_by', user.id)
+      .single();
+
+    if (!run) {
+      return NextResponse.json({ error: 'Run not found' }, { status: 404 });
+    }
+
+    if (run.status === 'stopping') {
+      if (!forceCancel) {
+        return NextResponse.json({ ok: true, status: 'stopping' });
+      }
+
+      const finishedAt = new Date().toISOString();
+      const { error: cancelError } = await sb
+        .from('agent_runs')
+        .update({
+          status: 'cancelled',
+          current_step: 'cancelled',
+          finished_at: finishedAt,
+        })
+        .eq('id', runId)
+        .eq('created_by', user.id);
+
+      if (cancelError) {
+        return NextResponse.json({ error: cancelError.message }, { status: 500 });
+      }
+
+      await sb.from('agent_run_events').insert({
+        run_id: runId,
+        agent_id: run.agent_id,
+        event_type: 'RUN_FINISHED',
+        payload: { status: 'cancelled', error: 'force_cancelled_from_ui' },
+        created_by: user.id,
+      });
+
+      return NextResponse.json({ ok: true, status: 'cancelled', forced: true });
+    }
+
+    if (!['queued', 'running'].includes(run.status)) {
+      return NextResponse.json(
+        { error: `Cannot stop a run with status: ${run.status}` },
+        { status: 400 },
+      );
+    }
+
+    const { error } = await sb
+      .from('agent_runs')
+      .update({ status: 'stopping' })
+      .eq('id', runId)
+      .eq('created_by', user.id);
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    return NextResponse.json({ ok: true, status: 'stopping', forced: false });
+  } catch (err: any) {
+    return NextResponse.json(
+      { error: err.message || 'Unable to stop run' },
+      { status: 500 },
+    );
+  }
 }

@@ -161,9 +161,6 @@ class GuardianScraper:
 
     def _extract_body(self, html: str) -> Optional[str]:
         patterns = [
-            r'<meta\s+property="og:description"\s+content="([^"]+)"',
-            r'<meta\s+content="([^"]+)"\s+property="og:description"',
-            r'<meta\s+name="description"\s+content="([^"]+)"',
             r'"description"\s*:\s*"([^"]{50,})"',
         ]
         for pattern in patterns:
@@ -180,8 +177,23 @@ class GuardianScraper:
             if len(text) > 50 and not any(x in text.lower() for x in ["copyright", "cookie", "javascript"]):
                 valid.append(text)
 
+        if len(valid) >= 3 or len(" ".join(valid[:8])) > 260:
+            return " ".join(valid[:8])
+
+        meta_patterns = [
+            r'<meta\s+property="og:description"\s+content="([^"]+)"',
+            r'<meta\s+content="([^"]+)"\s+property="og:description"',
+            r'<meta\s+name="description"\s+content="([^"]+)"',
+        ]
+        for pattern in meta_patterns:
+            match = re.search(pattern, html, re.IGNORECASE)
+            if match:
+                body = match.group(1).strip()
+                if len(body) > 100:
+                    return body
+
         if valid:
-            return " ".join(valid[:4])
+            return " ".join(valid[:8])
         return None
 
     def _extract_og_image(self, html: str) -> Optional[str]:

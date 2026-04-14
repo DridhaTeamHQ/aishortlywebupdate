@@ -5,7 +5,7 @@ login:
   # Role selection
   role_dropdown_trigger: "button[role='combobox']"
   role_options: "[role='option']"
-  role_text_selector: "span.font-medium"  # Role name is inside this span
+  role_text_selector: "span.font-medium"
   
   # Credentials
   email_input: "input#email"
@@ -21,24 +21,19 @@ dashboard:
   create_article_btn: "text='Create Article'"
 
 article_form:
-  # Modal detection
   modal: "[role='dialog']"
-  
-  # Form fields (by order in modal)
-  # Input 0 = Telugu Title, Input 1 = English Title
-  # Textarea 0 = Telugu Body, Textarea 1 = English Body
-  inputs: "input:visible"
-  textareas: "textarea:visible"
-  
-  # Category dropdown
+
+  english_title: "input[placeholder*='English title' i], #title_en"
+  english_body: "textarea[placeholder*='English content' i], #content_en"
+
   category_trigger: "button:has-text('Select category')"
   category_option: "[role='option']"
-  
-  # Image upload
+
+  keywords_input: "input[placeholder*='keyword' i]"
+  media_type_trigger: "xpath=//label[contains(normalize-space(), 'Media Type')]/following::*[@role='combobox'][1]"
   file_input: "input[type='file']"
-  
-  # Publish
-  publish_button: "button:has-text('Publish')"
+
+  submit_button: "button:has-text('Submit for Review')"
 
 verification:
-  success_toast: ".toast-success, text='successfully', text='published'"
+  success_toast: ".toast-success, text='successfully', text='review', text='created'"

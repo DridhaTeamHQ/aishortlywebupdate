@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import os
 import re
-from typing import Optional
 
-from openai import OpenAI
-
+from utils.gemini_client import GeminiClient
 from utils.logger import get_logger
 
 
@@ -44,7 +41,19 @@ class CategoryDecider:
         "sports": "Sports",
     }
 
-    INDIA_SOURCE_HINTS = ("toi", "the hindu", "times of india")
+    INDIA_SOURCE_HINTS = (
+        "toi",
+        "the hindu",
+        "times of india",
+        "ndtv",
+        "india today",
+        "hindustan times",
+        "indian express",
+        "new indian express",
+        "telangana today",
+        "siasat",
+        "eenadu",
+    )
     GLOBAL_SOURCE_HINTS = ("guardian", "bbc", "reuters", "aljazeera", "al jazeera", "cnn", "associated press", "ap")
 
     ENVIRONMENT_KEYWORDS = [
@@ -59,16 +68,23 @@ class CategoryDecider:
         "market", "stock", "economy", "inflation", "company", "startup", "gdp", "trade", "business", "finance",
         "interest rate", "mortgage", "bank", "oil prices", "revenue",
     ]
+    TELANGANA_KEYWORDS = [
+        "telangana", "hyderabad", "secunderabad", "warangal", "khammam", "nizamabad", "karimnagar", "ktr", "revanth reddy",
+        "ghmc", "huzurabad",
+    ]
+    ANDHRA_KEYWORDS = [
+        "andhra pradesh", "amaravati", "visakhapatnam", "vijayawada", "tirupati", "guntur", "kadapa", "nellore",
+        "ananthapur", "ananthapuramu", "chandrababu", "jagan",
+    ]
 
     def __init__(self):
         self.logger = get_logger("category")
-        self.api_key = os.getenv("OPENAI_API_KEY")
-        self.client: Optional[OpenAI] = OpenAI(api_key=self.api_key) if self.api_key else None
+        self.client = GeminiClient()
 
     def decide(self, title: str, body: str, source: str = "", pipeline_hint: str = "") -> str:
         heuristic = self._heuristic_decide(title=title, body=body, source=source, pipeline_hint=pipeline_hint)
 
-        if not self.client:
+        if not self.client or not self.client.available:
             return heuristic
 
         prompt = f"""Choose exactly ONE CMS category for this news article.
@@ -109,13 +125,11 @@ Rules:
 Return only the category name."""
 
         try:
-            response = self.client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": prompt}],
+            raw = self.client.generate_text(
+                prompt,
                 temperature=0,
-                max_tokens=20,
-            )
-            raw = (response.choices[0].message.content or "").strip()
+                max_output_tokens=20,
+            ).strip()
 
             model_choice = self._normalize_model_choice(raw)
             if not model_choice:
@@ -164,10 +178,14 @@ Return only the category name."""
     ) -> str:
         text = f" {title} {body} ".lower()
         source_low = (source or "").strip().lower()
+        state_override = self._state_override(text)
         india_context = self._is_india_context(text, source_low)
         env_signal = self._contains_any(text, self.ENVIRONMENT_KEYWORDS)
         tech_signal = self._contains_any(text, self.TECH_KEYWORDS)
         business_signal = self._contains_any(text, self.BUSINESS_KEYWORDS)
+
+        if state_override:
+            return state_override
 
         if pipeline_hint == "environment" and env_signal:
             return "Environment"
@@ -176,8 +194,9 @@ Return only the category name."""
         if pipeline_hint == "business" and business_signal:
             return "Business"
 
-        # Removed: source alone should not override category.
-        # India context is now determined purely by text markers.
+        if self._is_india_source(source_low):
+            if decided in {"International", "State"}:
+                return heuristic if heuristic in {"National", "Politics", "Telangana", "Andhra Pradesh", "Crime", "Business", "Finance"} else "National"
 
         if not india_context and decided in {"National", "State", "Andhra Pradesh", "Telangana"}:
             if env_signal:
@@ -223,20 +242,19 @@ Return only the category name."""
     def _is_india_context(self, text: str, source_low: str) -> bool:
         india_markers = [
             " india ", " indian ", "new delhi", "delhi", "mumbai", "bengaluru", "kolkata", "chennai", "hyderabad",
-            "rajya sabha", "lok sabha", "bihar", "telangana", "andhra pradesh",
+            "times of india", "the hindu", "rajya sabha", "lok sabha", "bihar", "telangana", "andhra pradesh",
             "west bengal", "maharashtra", "uttar pradesh", "tamil nadu", "kerala", "karnataka", "gujarat",
-            "modi", "bjp", "congress", "rupee", "sensex", "nifty", "bse", "nse",
         ]
-        # Source alone must NOT imply India context — only actual text markers matter.
+        if self._is_india_source(source_low):
+            return True
         return any(marker in text for marker in india_markers)
 
     def _heuristic_decide(self, title: str, body: str, source: str, pipeline_hint: str) -> str:
         text = f" {title} {body} ".lower()
 
-        if any(k in text for k in ["telangana", "hyderabad", "secunderabad"]):
-            return "Telangana"
-        if any(k in text for k in ["andhra pradesh", "amaravati", "visakhapatnam", "vijayawada"]):
-            return "Andhra Pradesh"
+        state_override = self._state_override(text)
+        if state_override:
+            return state_override
 
         if self._contains_any(text, self.ENVIRONMENT_KEYWORDS):
             return "Environment"
@@ -274,3 +292,10 @@ Return only the category name."""
                 return hinted
 
         return "National" if is_india_context else "International"
+
+    def _state_override(self, text: str) -> str:
+        if any(keyword in text for keyword in self.TELANGANA_KEYWORDS):
+            return "Telangana"
+        if any(keyword in text for keyword in self.ANDHRA_KEYWORDS):
+            return "Andhra Pradesh"
+        return ""

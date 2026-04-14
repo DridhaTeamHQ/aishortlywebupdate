@@ -13,8 +13,8 @@ export type Agent = {
 type Props = {
   agent: Agent;
   isRunning: boolean;
-  onStartRun: () => void;
-  onStopRun: () => void;
+  onStartRun: () => Promise<void>;
+  onStopRun: () => Promise<void>;
   runStatus?: string;
   currentStep?: string;
 };
@@ -24,10 +24,24 @@ export default function AgentCard({ agent, isRunning, onStartRun, onStopRun, run
   const [error, setError] = useState('');
 
   const handleStart = async () => {
+    if (busy) return;
     setBusy(true);
     setError('');
     try {
-      onStartRun();
+      await onStartRun();
+    } catch (e: any) {
+      setError(e.message || 'Failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleStop = async () => {
+    if (busy || runStatus === 'stopping') return;
+    setBusy(true);
+    setError('');
+    try {
+      await onStopRun();
     } catch (e: any) {
       setError(e.message || 'Failed');
     } finally {
@@ -55,12 +69,12 @@ export default function AgentCard({ agent, isRunning, onStartRun, onStopRun, run
 
       <div className="agent-meta">
         <div className="agent-meta-item">
-          <span>🏷️</span>
+          <span>Tag</span>
           <span>{agent.slug}</span>
         </div>
         {currentStep && (
           <div className="agent-meta-item">
-            <span>📍</span>
+            <span>Step</span>
             <span>{currentStep}</span>
           </div>
         )}
@@ -73,15 +87,15 @@ export default function AgentCard({ agent, isRunning, onStartRun, onStopRun, run
             onClick={handleStart}
             disabled={busy || !agent.enabled}
           >
-            {busy ? <><div className="spinner" /> Starting...</> : '▶ Start Agent'}
+            {busy ? <><div className="spinner" /> Starting...</> : 'Start Agent'}
           </button>
         ) : (
           <button
             className="btn btn-danger"
-            onClick={onStopRun}
-            disabled={runStatus === 'stopping'}
+            onClick={handleStop}
+            disabled={busy || runStatus === 'stopping'}
           >
-            {runStatus === 'stopping' ? <><div className="spinner" /> Stopping...</> : '■ Stop Agent'}
+            {busy || runStatus === 'stopping' ? <><div className="spinner" /> Stopping...</> : 'Stop Agent'}
           </button>
         )}
       </div>

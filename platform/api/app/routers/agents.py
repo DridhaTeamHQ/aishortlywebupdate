@@ -17,8 +17,12 @@ def list_agents(ctx: AuthContext = Depends(get_auth_context), repo: Repository =
 def create_run(agent_id: str, ctx: AuthContext = Depends(require_operator_or_admin), repo: Repository = Depends(Repository)):
     row = repo.create_run(ctx.org_id, agent_id, ctx.user_id)
 
-    q = get_queue()
-    q.enqueue("worker_tasks.execute_agent_run", row["id"], agent_id, ctx.user_id)
+    try:
+        q = get_queue()
+        q.enqueue("worker_tasks.execute_agent_run", row["id"], agent_id, ctx.user_id)
+    except Exception:
+        # Local development can run with the polling worker instead of Redis/RQ.
+        pass
 
     return CreateRunResponse(run_id=row["id"], status=row["status"])
 

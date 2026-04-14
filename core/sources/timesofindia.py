@@ -137,6 +137,16 @@ class TimesOfIndiaScraper:
         return None
 
     def _extract_body(self, html_text: str) -> Optional[str]:
+        paragraphs = re.findall(r"<p[^>]*>(.*?)</p>", html_text, re.DOTALL | re.IGNORECASE)
+        valid: List[str] = []
+        for paragraph in paragraphs:
+            text = html.unescape(re.sub(r"<[^>]+>", " ", paragraph)).strip()
+            text = re.sub(r"\s+", " ", text)
+            if len(text) > 24 and not any(x in text.lower() for x in ["copyright", "subscribe", "advertisement"]):
+                valid.append(text)
+        if len(valid) >= 3 or len(" ".join(valid[:10])) > 260:
+            return " ".join(valid[:10])
+
         patterns = [
             r'<meta\s+property="og:description"\s+content="([^"]+)"',
             r'<meta\s+content="([^"]+)"\s+property="og:description"',
@@ -149,17 +159,8 @@ class TimesOfIndiaScraper:
                 body = html.unescape(match.group(1).strip().replace("\\n", " "))
                 if len(body) > 70:
                     return body
-
-        paragraphs = re.findall(r"<p[^>]*>(.*?)</p>", html_text, re.DOTALL | re.IGNORECASE)
-        valid: List[str] = []
-        for paragraph in paragraphs:
-            text = html.unescape(re.sub(r"<[^>]+>", " ", paragraph)).strip()
-            text = re.sub(r"\s+", " ", text)
-            if len(text) > 24 and not any(x in text.lower() for x in ["copyright", "subscribe", "advertisement"]):
-                valid.append(text)
-
         if valid:
-            return " ".join(valid[:6])
+            return " ".join(valid[:10])
         return None
 
     def _convert_photo_cms_to_jpg(self, url: str) -> str:

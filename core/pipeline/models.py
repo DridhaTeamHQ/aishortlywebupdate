@@ -35,6 +35,7 @@ class EventCluster:
     start_time: datetime
     end_time: datetime
     dominant_category: CategoryName
+    story_key: str = ""
 
 
 @dataclass

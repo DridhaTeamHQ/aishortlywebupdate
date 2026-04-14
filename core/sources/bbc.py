@@ -121,18 +121,6 @@ class BBCScraper:
         return None
 
     def _extract_body(self, html_text: str) -> Optional[str]:
-        meta_patterns = [
-            r'<meta[^>]+property=["\']og:description["\'][^>]+content=["\']([^"\']+)["\']',
-            r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:description["\']',
-            r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']+)["\']',
-        ]
-        for pattern in meta_patterns:
-            match = re.search(pattern, html_text, re.IGNORECASE)
-            if match:
-                text = self._clean_text(match.group(1))
-                if len(text) > 55:
-                    return text
-
         json_patterns = [
             r'"articleBody"\s*:\s*"([^"]{80,})"',
             r'"summary"\s*:\s*"([^"]{80,})"',
@@ -152,8 +140,23 @@ class BBCScraper:
             text = self._clean_text(re.sub(r"<[^>]+>", " ", paragraph))
             if len(text) > 24 and not any(x in text.lower() for x in ["copyright", "rights reserved", "javascript", "cookie"]):
                 valid.append(text)
+        if len(valid) >= 3 or len(" ".join(valid[:10])) > 260:
+            return " ".join(valid[:10])
+
+        meta_patterns = [
+            r'<meta[^>]+property=["\']og:description["\'][^>]+content=["\']([^"\']+)["\']',
+            r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:description["\']',
+            r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']+)["\']',
+        ]
+        for pattern in meta_patterns:
+            match = re.search(pattern, html_text, re.IGNORECASE)
+            if match:
+                text = self._clean_text(match.group(1))
+                if len(text) > 55:
+                    return text
+
         if valid:
-            return " ".join(valid[:8])
+            return " ".join(valid[:10])
 
         return None
 

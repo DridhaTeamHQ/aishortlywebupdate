@@ -117,8 +117,6 @@ class AlJazeeraScraper:
         for pattern in [
             r'"articleBody"\s*:\s*"([^"]{80,})"',
             r'"description"\s*:\s*"([^"]{80,})"',
-            r'<meta[^>]+property=["\']og:description["\'][^>]+content=["\']([^"\']+)"',
-            r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']+)"',
         ]:
             match = re.search(pattern, html_text, re.IGNORECASE)
             if not match:
@@ -133,8 +131,21 @@ class AlJazeeraScraper:
             text = self._clean_text(re.sub(r"<[^>]+>", " ", paragraph))
             if len(text) > 24 and not any(x in text.lower() for x in ["copyright", "javascript", "cookie", "newsletter"]):
                 valid.append(text)
+        if len(valid) >= 3 or len(" ".join(valid[:10])) > 260:
+            return " ".join(valid[:10])
+
+        for pattern in [
+            r'<meta[^>]+property=["\']og:description["\'][^>]+content=["\']([^"\']+)"',
+            r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']+)"',
+        ]:
+            match = re.search(pattern, html_text, re.IGNORECASE)
+            if not match:
+                continue
+            text = self._clean_text(match.group(1))
+            if len(text) > 55:
+                return text
         if valid:
-            return " ".join(valid[:8])
+            return " ".join(valid[:10])
         return None
 
     def _extract_og_image(self, html_text: str) -> Optional[str]:

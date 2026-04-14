@@ -15,7 +15,9 @@ load_dotenv()
 def main() -> None:
     logger = get_logger("main")
 
-    required_vars = ["OPENAI_API_KEY", "CMS_URL", "CMS_EMAIL", "CMS_PASSWORD"]
+    ai_provider = (os.getenv("AI_PROVIDER", "openai") or "openai").strip().lower()
+    model_key_var = "GEMINI_API_KEY" if ai_provider == "gemini" else "OPENAI_API_KEY"
+    required_vars = [model_key_var, "CMS_URL", "CMS_EMAIL", "CMS_PASSWORD"]
     missing = [name for name in required_vars if not os.getenv(name)]
 
     if missing:

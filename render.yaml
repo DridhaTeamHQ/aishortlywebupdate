@@ -1,6 +1,7 @@
 services:
+  # Next.js Dashboard
   - type: web
-    name: agent-platform-web
+    name: shortly-dashboard
     env: node
     rootDir: web
     buildCommand: npm install && npm run build
@@ -11,57 +12,29 @@ services:
         sync: false
       - key: NEXT_PUBLIC_SUPABASE_ANON_KEY
         sync: false
-      - key: NEXT_PUBLIC_API_BASE_URL
-        sync: false
-
-  - type: web
-    name: agent-platform-api
-    env: python
-    rootDir: platform/api
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
-    plan: starter
-    envVars:
-      - key: SUPABASE_URL
-        sync: false
-      - key: SUPABASE_ANON_KEY
-        sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
-      - key: REDIS_URL
-        fromService:
-          type: redis
-          name: agent-platform-redis
-          property: connectionString
-      - key: RQ_QUEUE_NAME
-        value: agent-runs
-      - key: PLATFORM_ENCRYPTION_KEY
-        generateValue: true
-      - key: BROWSER_STREAM_BASE_URL
-        sync: false
 
+  # Core Python Playwright Worker
   - type: worker
-    name: agent-platform-worker
+    name: shortly-worker
     env: python
     rootDir: .
-    buildCommand: pip install -r platform/worker/requirements.txt && pip install -r requirements.txt
-    startCommand: python platform/worker/worker.py
+    buildCommand: pip install -r requirements.txt && playwright install chromium --with-deps
+    startCommand: python worker.py
     plan: starter
     envVars:
       - key: SUPABASE_URL
-        sync: false
-      - key: SUPABASE_SERVICE_ROLE_KEY
-        sync: false
-      - key: REDIS_URL
         fromService:
-          type: redis
-          name: agent-platform-redis
-          property: connectionString
-      - key: RQ_QUEUE_NAME
-        value: agent-runs
-      - key: PLATFORM_ENCRYPTION_KEY
-        sync: false
-      - key: BROWSER_STREAM_BASE_URL
+          type: web
+          name: shortly-dashboard
+          envVarKey: NEXT_PUBLIC_SUPABASE_URL
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        fromService:
+          type: web
+          name: shortly-dashboard
+          envVarKey: SUPABASE_SERVICE_ROLE_KEY
+      - key: GEMINI_API_KEY
         sync: false
       - key: OPENAI_API_KEY
         sync: false
@@ -71,36 +44,5 @@ services:
         sync: false
       - key: CMS_PASSWORD
         sync: false
-
-  - type: web
-    name: agent-platform-browser-stream
-    env: python
-    rootDir: platform/browser-stream
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
-    plan: starter
-
-  - type: redis
-    name: agent-platform-redis
-    plan: starter
-
-
-  - type: worker
-    name: agent-platform-scheduler
-    env: python
-    rootDir: .
-    buildCommand: pip install -r platform/worker/requirements.txt
-    startCommand: python platform/worker/scheduler.py
-    plan: starter
-    envVars:
-      - key: SUPABASE_URL
-        sync: false
-      - key: SUPABASE_SERVICE_ROLE_KEY
-        sync: false
-      - key: REDIS_URL
-        fromService:
-          type: redis
-          name: agent-platform-redis
-          property: connectionString
-      - key: RQ_QUEUE_NAME
-        value: agent-runs
+      - key: AI_PROVIDER
+        value: openai # or gemini

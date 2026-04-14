@@ -1,4 +1,4 @@
-﻿import json
+import json
 import os
 from dataclasses import dataclass
 from typing import Any, Dict, List
@@ -34,41 +34,40 @@ def _parse_json_env(name: str, default: Any) -> Any:
 
 DEFAULT_CATEGORY_SOURCES: Dict[str, List[Dict[str, str]]] = {
     "business": [
+        {"name": "Reuters", "scraper": "reuters", "url": "https://www.reuters.com/business/"},
         {"name": "TOI", "scraper": "toi", "url": "https://timesofindia.indiatimes.com/business"},
         {"name": "India Today", "scraper": "indiatoday", "url": "https://www.indiatoday.in/business"},
-        {"name": "Reuters", "scraper": "reuters", "url": "https://www.reuters.com/business/"},
     ],
     "tech": [
+        {"name": "Reuters", "scraper": "reuters", "url": "https://www.reuters.com/technology/"},
         {"name": "TOI", "scraper": "toi", "url": "https://timesofindia.indiatimes.com/technology"},
         {"name": "India Today", "scraper": "indiatoday", "url": "https://www.indiatoday.in/technology"},
-        {"name": "Reuters", "scraper": "reuters", "url": "https://www.reuters.com/technology/"},
     ],
     "international": [
+        {"name": "Reuters", "scraper": "reuters", "url": "https://www.reuters.com/world/"},
         {"name": "TOI", "scraper": "toi", "url": "https://timesofindia.indiatimes.com/world"},
         {"name": "India Today", "scraper": "indiatoday", "url": "https://www.indiatoday.in/world"},
-        {"name": "Reuters", "scraper": "reuters", "url": "https://www.reuters.com/world/"},
         {"name": "AlJazeera", "scraper": "aljazeera", "url": "https://www.aljazeera.com/news"},
     ],
     "national": [
+        {"name": "The Hindu", "scraper": "thehindu", "url": "https://www.thehindu.com/news/national/"},
         {"name": "TOI", "scraper": "toi", "url": "https://timesofindia.indiatimes.com/india"},
-        {"name": "Reuters", "scraper": "reuters", "url": "https://www.reuters.com/world/india/"},
         {"name": "India Today", "scraper": "indiatoday", "url": "https://www.indiatoday.in/india"},
     ],
     "environment": [
+        {"name": "Reuters", "scraper": "reuters", "url": "https://www.reuters.com/business/environment/"},
         {"name": "India Today", "scraper": "indiatoday", "url": "https://www.indiatoday.in/environment"},
         {"name": "TOI", "scraper": "toi", "url": "https://timesofindia.indiatimes.com/india"},
-        {"name": "Reuters", "scraper": "reuters", "url": "https://www.reuters.com/sustainability/"},
+        {"name": "AlJazeera", "scraper": "aljazeera", "url": "https://www.aljazeera.com/climate-crisis"},
     ],
     "crime": [
-        {"name": "TOI", "scraper": "toi", "url": "https://timesofindia.indiatimes.com/city"},
+        {"name": "The Hindu", "scraper": "thehindu", "url": "https://www.thehindu.com/news/national/"},
         {"name": "TOI", "scraper": "toi", "url": "https://timesofindia.indiatimes.com/india"},
-        {"name": "India Today", "scraper": "indiatoday", "url": "https://www.indiatoday.in/crime"},
-
+        {"name": "India Today", "scraper": "indiatoday", "url": "https://www.indiatoday.in/india"},
     ],
     "sports": [
         {"name": "TOI", "scraper": "toi", "url": "https://timesofindia.indiatimes.com/sports"},
-        {"name": "India Today", "scraper": "indiatoday", "url": "https://www.indiatoday.in/sports"},
-        {"name": "Reuters", "scraper": "reuters", "url": "https://www.reuters.com/sports/"},
+        {"name": "The Hindu", "scraper": "thehindu", "url": "https://www.thehindu.com/sport/"},
     ],
 }
 
@@ -102,16 +101,19 @@ def _parse_category_sources(name: str = "CATEGORY_SOURCES") -> Dict[str, List[Di
 
 
 DEFAULT_SOURCE_CREDIBILITY = {
-    "TOI": 0.80,
-    "India Today": 0.82,
-    "Reuters": 0.95,
+    "BBC": 0.9,
     "AlJazeera": 0.82,
+    "TOI": 0.78,
+    "NDTV": 0.72,
+    "India Today": 0.79,
+    "Reuters": 0.95,
+    "The Hindu": 0.84,
 }
 
 DEFAULT_IMAGE_THRESHOLDS = {
     "min_width": 420,
     "min_height": 236,
-    "min_file_size_bytes": 15000,
+    "min_file_size_bytes": 30000,
     "min_aspect_ratio": 0.4,
     "max_aspect_ratio": 2.8,
     "min_sharpness": 18.0,
@@ -119,14 +121,15 @@ DEFAULT_IMAGE_THRESHOLDS = {
     "vision_weight": 0.25,
     "min_vision_quality": 0.58,
     "min_vision_relevance": 0.4,
-    "vision_max_candidates": 6,
+    "vision_max_candidates": 3,
+    "max_probe_candidates": 5,
 }
 
 DEFAULT_CATEGORY_PUBLISH_PLAN: List[Dict[str, Any]] = [
     {"category": "international", "total": 5, "breaking_target": 3},
     {"category": "national", "total": 5, "breaking_target": 3},
     {"category": "business", "total": 5, "breaking_target": 3},
-    {"category": "sports", "total": 5, "breaking_target": 3},
+    {"category": "sports", "total": 5, "breaking_target": 0},
     {"category": "tech", "total": 5, "breaking_target": 3},
     {"category": "environment", "total": 5, "breaking_target": 3},
     {"category": "crime", "total": 5, "breaking_target": 3},
@@ -187,11 +190,13 @@ class Settings:
 
     max_articles: int
     max_links_per_source: int
-    max_article_age_hours: int
+    max_article_age_minutes: int
+    require_published_time: bool
 
     scheduler_enabled: bool
     scheduler_interval_minutes: int
     recent_failure_skip_minutes: int
+    story_dedupe_hours: int
 
     category_sources: Dict[str, List[Dict[str, str]]]
     category_publish_plan: List[Dict[str, Any]]
@@ -213,11 +218,11 @@ def get_settings() -> Settings:
         cms_url=os.getenv("CMS_URL", "").strip(),
         cms_email=os.getenv("CMS_EMAIL", "").strip(),
         cms_password=os.getenv("CMS_PASSWORD", "").strip(),
-        cms_role=os.getenv("CMS_ROLE", "State Sub Editor").strip(),
+        cms_role=os.getenv("CMS_ROLE", "Content Writer").strip(),
         source_url=os.getenv("SOURCE_URL", "").strip(),
         gemini_api_key=os.getenv("GEMINI_API_KEY"),
         openai_api_key=os.getenv("OPENAI_API_KEY"),
-        ai_provider=os.getenv("AI_PROVIDER", "gemini").strip().lower(),
+        ai_provider=os.getenv("AI_PROVIDER", "openai").strip().lower(),
         headless=_get_bool(os.getenv("HEADLESS"), False),
         slow_mo=int(os.getenv("SLOW_MO", "0")),
         user_data_dir=os.getenv("USER_DATA_DIR", ".playwright").strip(),
@@ -227,11 +232,18 @@ def get_settings() -> Settings:
 
         max_articles=int(os.getenv("MAX_ARTICLES", "5")),
         max_links_per_source=int(os.getenv("MAX_LINKS_PER_SOURCE", "8")),
-        max_article_age_hours=int(os.getenv("MAX_ARTICLE_AGE_HOURS", "24")),
+        max_article_age_minutes=int(
+            os.getenv(
+                "MAX_ARTICLE_AGE_MINUTES",
+                str(int(os.getenv("MAX_ARTICLE_AGE_HOURS", "0")) * 60) if os.getenv("MAX_ARTICLE_AGE_HOURS") else "1440",
+            )
+        ),
+        require_published_time=_get_bool(os.getenv("REQUIRE_PUBLISHED_TIME"), True),
 
         scheduler_enabled=_get_bool(os.getenv("SCHEDULER_ENABLED"), False),
         scheduler_interval_minutes=int(os.getenv("SCHEDULER_INTERVAL_MINUTES", "15")),
         recent_failure_skip_minutes=int(os.getenv("RECENT_FAILURE_SKIP_MINUTES", "45")),
+        story_dedupe_hours=int(os.getenv("STORY_DEDUPE_HOURS", "48")),
 
         category_sources=_parse_category_sources("CATEGORY_SOURCES"),
         category_publish_plan=_parse_publish_plan("CATEGORY_PUBLISH_PLAN"),
@@ -247,4 +259,6 @@ def get_settings() -> Settings:
 
         image_quality_thresholds=_parse_json_env("IMAGE_QUALITY_THRESHOLDS", DEFAULT_IMAGE_THRESHOLDS),
     )
+
+
 

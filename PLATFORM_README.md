@@ -9,6 +9,11 @@ This repository now includes a deployable multi-service platform:
 - `platform/supabase/schema.sql`: Supabase schema + RLS + seed
 - `render.yaml`: Render Blueprint
 
+The worker is designed to run the real external agent repo:
+- `https://github.com/DridhaTeamHQ/ai-agent-browser.git`
+- During Render build, the worker clones that repo into `external/ai-agent-browser`
+- `worker_tasks.py` then loads `core.orchestrator` from that external repo and applies dashboard runtime controls
+
 ## Quick setup
 
 1. Create a Supabase project.
@@ -18,8 +23,9 @@ This repository now includes a deployable multi-service platform:
    - Supabase keys/URL on API + worker + web
    - `PLATFORM_ENCRYPTION_KEY` on API + worker (same value)
    - CMS/OpenAI vars on worker
-   - `NEXT_PUBLIC_API_BASE_URL` on web
+   - `CONTROL_API_BASE_URL` on web
    - `BROWSER_STREAM_BASE_URL` on API + worker
+   - `AI_AGENT_REPO_PATH` on worker if you want to override the default external repo checkout path
 
 ## API contracts
 

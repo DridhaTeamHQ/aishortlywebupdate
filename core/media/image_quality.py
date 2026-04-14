@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import hashlib
 import html as html_lib
 import json
@@ -16,13 +15,9 @@ from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
 import httpx
 
+from utils.gemini_client import GeminiClient
 from utils.image_utils import get_image_dimensions
 from utils.logger import get_logger
-
-try:
-    from openai import OpenAI
-except Exception:  # pragma: no cover
-    OpenAI = None  # type: ignore
 
 
 @dataclass
@@ -46,6 +41,20 @@ class ImageDecision:
 
 
 class ImageQualityPipeline:
+    _VISION_JSON_SCHEMA = {
+        "type": "object",
+        "properties": {
+            "usable": {"type": "boolean"},
+            "quality": {"type": "number"},
+            "relevance": {"type": "number"},
+            "is_relevant": {"type": "boolean"},
+            "has_logo": {"type": "boolean"},
+            "has_watermark": {"type": "boolean"},
+            "reason": {"type": "string"},
+        },
+        "required": ["usable", "quality", "relevance", "is_relevant", "has_logo", "has_watermark", "reason"],
+    }
+
     BLOCKED_URL_TOKENS = {
         "watermark",
         "logo",
@@ -115,6 +124,7 @@ class ImageQualityPipeline:
         self.vision_weight = float(self.thresholds.get("vision_weight", 0.25))
         self.min_vision_quality = float(self.thresholds.get("min_vision_quality", 0.58))
         self.max_vision_candidates = int(self.thresholds.get("vision_max_candidates", 6))
+        self.max_probe_candidates = int(self.thresholds.get("max_probe_candidates", 8))
 
         vision_enabled_env = (os.getenv("IMAGE_VISION_ENABLED", "true") or "true").strip().lower()
         self.vision_enabled = vision_enabled_env in {"1", "true", "yes", "y"}
@@ -122,10 +132,9 @@ class ImageQualityPipeline:
         self._vision_cache: Dict[str, Dict[str, object]] = {}
         self._vision_client = None
 
-        api_key = os.getenv("OPENAI_API_KEY")
-        if self.vision_enabled and api_key and OpenAI is not None:
+        if self.vision_enabled:
             try:
-                self._vision_client = OpenAI(api_key=api_key)
+                self._vision_client = GeminiClient()
             except Exception as exc:
                 self.logger.warning(f"Vision client init failed, continuing without vision filter: {exc}")
                 self._vision_client = None
@@ -152,7 +161,7 @@ class ImageQualityPipeline:
         static_passes: List[Tuple[ImageCandidate, Dict[str, object]]] = []
         rejections: List[str] = []
 
-        for cand in self._dedupe_candidates(candidates):
+        for cand in self._limit_probe_candidates(self._dedupe_candidates(candidates)):
             probe = self._probe(cand, title, article_context or "")
             if not probe["ok"]:
                 rejections.append(str(probe.get("reason", "unknown")))
@@ -168,6 +177,7 @@ class ImageQualityPipeline:
             )
 
         static_passes.sort(key=lambda row: float(row[1]["score"]), reverse=True)
+        static_passes = static_passes[: max(1, self.max_vision_candidates)]
 
         best: Optional[Tuple[ImageCandidate, Dict[str, object], float, Dict[str, object]]] = None
         for cand, probe in static_passes:
@@ -185,7 +195,8 @@ class ImageQualityPipeline:
             )
 
             if not bool(vision.get("usable", True)):
-                rejections.append(str(vision.get("reason", "vision_rejected")))
+                vision_reason = str(vision.get("reason", "vision_rejected"))
+                rejections.append(vision_reason)
                 continue
 
             static_score = float(probe["score"])
@@ -198,16 +209,9 @@ class ImageQualityPipeline:
                 best = (cand, probe, final_score, vision)
 
         if not best:
-            # Throughput fallback: if static checks passed and vision was only uncertain,
-            # publish with the strongest static image rather than dropping the story.
-            fallback_allowed = {
-                "vision_irrelevant",
-                "vision_low_quality",
-                "vision_skipped_large_image",
-                "vision_error_rejected",
-                "vision_parse_failed",
-            }
-            if static_passes and rejections and all(r in fallback_allowed for r in rejections):
+            # Publish-first fallback: if static checks passed, keep the strongest static image
+            # instead of dropping the article on the vision pass.
+            if static_passes:
                 cand, probe = static_passes[0]
                 path = self._store_image(probe["bytes"], title)
                 return ImageDecision(
@@ -302,6 +306,7 @@ class ImageQualityPipeline:
                 )
 
         if "indiatoday.in" in host:
+            slug_tokens = self._story_slug_tokens(base_url)
             matches = re.findall(
                 r'https://akm-img-a-in\.tosshub\.com/indiatoday/images/story/[^"\s]+\.(?:jpg|jpeg|png|webp)(?:\?[^"\s]+)?',
                 html,
@@ -316,10 +321,13 @@ class ImageQualityPipeline:
                 seen.add(candidate)
                 if any(token in low for token in ("/reporter/", "androidtv-app", "default-690x413", "screenshot_", "/sites/indiatoday/resources/")):
                     continue
+                if slug_tokens and self._candidate_slug_overlap(low, slug_tokens) < 2:
+                    continue
                 priority = 1 if "16x9_0" in low else 2
                 out.append(ImageCandidate(url=candidate, source="source:indiatoday", priority=priority, context_text="indiatoday hero"))
 
         return out
+
     def _extract_candidates(self, html: str, base_url: str) -> List[ImageCandidate]:
         out: List[ImageCandidate] = []
         if not html:
@@ -361,8 +369,60 @@ class ImageQualityPipeline:
             )
 
         out = [c for c in out if c.url]
+        out = self._filter_source_candidates(out, base_url)
         out.sort(key=lambda c: (c.priority, -c.width_hint))
         return out
+
+    def _story_slug_tokens(self, base_url: str) -> List[str]:
+        path = urlparse(base_url).path.lower()
+        parts = [part for part in path.split('/') if part]
+        if not parts:
+            return []
+        slug = parts[-1]
+        slug = re.sub(r'articleshow/\d+\.cms$', '', slug)
+        slug = re.sub(r'-\d{4}-\d{2}-\d{2}$', '', slug)
+        slug = re.sub(r'-\d+$', '', slug)
+        tokens = re.findall(r'[a-z]{4,}', slug)
+        stop = {
+            'story', 'india', 'today', 'world', 'news', 'video', 'photos', 'latest', 'middle', 'east',
+            'update', 'updates', 'live', 'breaking', 'review', 'watch', 'explained', 'report', 'reports'
+        }
+        return [token for token in tokens if token not in stop]
+
+    def _candidate_slug_overlap(self, candidate_url: str, slug_tokens: List[str]) -> int:
+        low = candidate_url.lower()
+        return sum(1 for token in slug_tokens if token in low)
+
+    def _filter_source_candidates(self, candidates: List[ImageCandidate], base_url: str) -> List[ImageCandidate]:
+        host = urlparse(base_url).netloc.lower()
+        if "timesofindia.indiatimes.com" in host:
+            article_match = re.search(r'articleshow/(\d+)\.cms', base_url, re.IGNORECASE)
+            if article_match:
+                article_msid = article_match.group(1)
+                filtered: List[ImageCandidate] = []
+                for cand in candidates:
+                    low = cand.url.lower()
+                    if "static.toiimg.com" not in low:
+                        filtered.append(cand)
+                        continue
+                    if f"msid-{article_msid}" in low or f"/{article_msid}.jpg" in low or f"/{article_msid}.jpeg" in low:
+                        filtered.append(cand)
+                if filtered:
+                    return filtered
+        if "indiatoday.in" in host:
+            slug_tokens = self._story_slug_tokens(base_url)
+            if slug_tokens:
+                filtered = []
+                for cand in candidates:
+                    low = cand.url.lower()
+                    if "akm-img-a-in.tosshub.com/indiatoday/images/story/" not in low:
+                        filtered.append(cand)
+                        continue
+                    if self._candidate_slug_overlap(low, slug_tokens) >= 2:
+                        filtered.append(cand)
+                if filtered:
+                    return filtered
+        return candidates
 
     def _meta(self, html: str, attr: str, value: str) -> Optional[str]:
         p1 = rf'<meta[^>]+{attr}=["\']{re.escape(value)}["\'][^>]+content=["\']([^"\']+)["\']'
@@ -449,6 +509,12 @@ class ImageQualityPipeline:
             cand.url = normalized
             out.append(cand)
         return out
+
+    def _limit_probe_candidates(self, candidates: List[ImageCandidate]) -> List[ImageCandidate]:
+        if len(candidates) <= self.max_probe_candidates:
+            return candidates
+        ranked = sorted(candidates, key=lambda cand: (cand.priority, -cand.width_hint))
+        return ranked[: max(1, self.max_probe_candidates)]
 
     def _normalize_candidate_url(self, url: str) -> str:
         if not url:
@@ -608,17 +674,8 @@ class ImageQualityPipeline:
                 continue
 
             relevance = self._relevance_score(probe_url, title, candidate.context_text, article_context)
-            host_low = urlparse(probe_url).netloc.lower()
-            relaxed_news_cdn = (
-                ("static.toiimg.com" in host_low)
-                or ("th-i.thgim.com" in host_low)
-                or ("i.guim.co.uk" in host_low)
-                or ("aljazeera.com" in host_low)
-                or ("ichef.bbci.co.uk" in host_low)
-                or ("tosshub.com" in host_low)
-            )
-            # Keep strict relevance checks only for noisy discovery paths and non-news CDN links.
-            if relevance < min_relevance and candidate.source in {"body", "srcset", "schema"} and not relaxed_news_cdn:
+            # Keep strict relevance checks on noisier discovery sources.
+            if relevance < min_relevance and candidate.source in {"body", "srcset", "schema"}:
                 failures.append("low_relevance")
                 continue
 
@@ -682,7 +739,7 @@ class ImageQualityPipeline:
             "has_watermark": False,
         }
 
-        if self._vision_client is None:
+        if self._vision_client is None or not self._vision_client.available:
             return default
 
         if len(image_bytes) > 5_000_000:
@@ -701,35 +758,28 @@ class ImageQualityPipeline:
             return self._vision_cache[key]
 
         try:
-            b64 = base64.b64encode(image_bytes).decode("ascii")
             prompt = (
                 "You are selecting a CMS hero image for a news article. "
-                "CRITICAL: The image MUST be directly related to the article topic. "
-                "Reject if the image shows people, events, or subjects NOT mentioned in the article title. "
                 "Reject if there is ANY publisher logo, watermark, corner badge, channel bug, signature mark, "
                 "or heavy text overlay anywhere in the image. "
-                "Reject if blurry, low-detail, noisy, poor quality. "
+                "Reject if blurry, low-detail, noisy, poor quality, or visually unrelated to the article. "
+                "The image must clearly match the main subject of the story, not just the general topic. "
+                "Reject generic stock photos, portraits, meeting shots, vehicles, fuel pumps, maps, crowds, "
+                "or scenery when the article is about a specific aircraft, person, court case, sports event, location, or object. "
                 "Return strict JSON only with keys: usable (bool), quality (0..1), relevance (0..1), is_relevant (bool), "
                 "has_logo (bool), has_watermark (bool), reason (string). "
                 f"Article title: {title[:180]}. Candidate hints: {candidate_context[:140]}. Article context: {article_context[:220]}"
             )
 
-            response = self._vision_client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": prompt},
-                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "high"}},
-                        ],
-                    }
-                ],
+            raw = self._vision_client.generate_text_with_image(
+                prompt,
+                image_bytes,
+                mime_type="image/jpeg",
                 temperature=0,
-                max_tokens=120,
+                max_output_tokens=120,
+                response_mime_type="application/json",
+                response_schema=self._VISION_JSON_SCHEMA,
             )
-
-            raw = (response.choices[0].message.content or "").strip()
             parsed = self._parse_vision_json(raw)
 
             usable = bool(parsed.get("usable", True))
@@ -748,7 +798,7 @@ class ImageQualityPipeline:
                 usable = False
                 reason = "vision_low_quality"
 
-            min_vision_relevance = float(self.thresholds.get("min_vision_relevance", 0.5))
+            min_vision_relevance = float(self.thresholds.get("min_vision_relevance", 0.4))
             if (not is_relevant) or relevance < min_vision_relevance:
                 usable = False
                 reason = "vision_irrelevant"
@@ -900,11 +950,16 @@ class ImageQualityPipeline:
         return max(0.0, min(1.0, score))
 
     def _store_image(self, data: bytes, title: str) -> str:
-        content_hash = hashlib.sha1(data).hexdigest()[:10]
-        safe = re.sub(r"[^a-zA-Z0-9\s-]", "", title)[:30].strip().replace(" ", "_") or "image"
-        path = self.download_dir / f"{safe}_{content_hash}.jpg"
+        safe = re.sub(r"[^a-zA-Z0-9\s-]", "", title)[:40].strip().replace(" ", "_") or "image"
+        path = self.download_dir / f"{safe}.jpg"
         path.write_bytes(data)
         return str(path.resolve())
+
+
+
+
+
+
 
 
 

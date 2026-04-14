@@ -23,7 +23,7 @@ class OGImageDownloader:
     """
 
     DOWNLOAD_DIR = Path("downloads/images")
-    MIN_SIZE_BYTES = 15000  # 15KB minimum (lowered from 30KB to accept more sources)
+    MIN_SIZE_BYTES = 30000  # 30KB minimum
     PREFERRED_MIN_BYTES = 100000  # Prefer 100KB+ for better quality
 
     def __init__(self):

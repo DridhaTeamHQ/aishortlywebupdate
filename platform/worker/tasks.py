@@ -5,7 +5,7 @@ from typing import Any, Dict
 
 from supabase import create_client
 
-from core.runtime import AgentJobRunner
+from platform.worker.agent_runner import AgentJobRunner
 
 
 def _settings() -> Dict[str, str]:
@@ -13,6 +13,7 @@ def _settings() -> Dict[str, str]:
         "SUPABASE_URL": os.getenv("SUPABASE_URL", "").strip(),
         "SUPABASE_SERVICE_ROLE_KEY": os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip(),
         "BROWSER_STREAM_BASE_URL": os.getenv("BROWSER_STREAM_BASE_URL", "http://localhost:8090").strip(),
+        "AI_AGENT_REPO_PATH": os.getenv("AI_AGENT_REPO_PATH", "").strip(),
     }
 
 
@@ -61,7 +62,11 @@ def execute_agent_run(run_id: str, agent_id: str, user_id: str) -> None:
     def cancel_check() -> bool:
         return fetch_status() == "stopping"
 
-    runner = AgentJobRunner(cancel_check=cancel_check, event_sink=emit)
+    runner = AgentJobRunner(
+        cancel_check=cancel_check,
+        event_sink=emit,
+        repo_path=cfg["AI_AGENT_REPO_PATH"] or None,
+    )
     result = asyncio.run(runner.run())
 
     final_status = result.status

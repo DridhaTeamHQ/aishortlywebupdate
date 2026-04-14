@@ -125,6 +125,15 @@ class IndiaTodayScraper:
         return None
 
     def _extract_body(self, html_text: str) -> Optional[str]:
+        paragraphs = re.findall(r'<p\b[^>]*>(.*?)</p>', html_text, re.DOTALL | re.IGNORECASE)
+        valid: List[str] = []
+        for paragraph in paragraphs:
+            text = self._clean_text(re.sub(r"<[^>]+>", " ", paragraph))
+            if len(text) > 28 and not any(x in text.lower() for x in ["copyright", "advertisement", "read more"]):
+                valid.append(text)
+        if len(valid) >= 3 or len(" ".join(valid[:10])) > 260:
+            return " ".join(valid[:10])
+
         meta_patterns = [
             r'<meta[^>]+property=["\']og:description["\'][^>]+content=["\']([^"\']+)["\']',
             r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:description["\']',
@@ -137,15 +146,8 @@ class IndiaTodayScraper:
                 text = self._clean_text(match.group(1))
                 if len(text) > 75:
                     return text
-
-        paragraphs = re.findall(r'<p\b[^>]*>(.*?)</p>', html_text, re.DOTALL | re.IGNORECASE)
-        valid: List[str] = []
-        for paragraph in paragraphs:
-            text = self._clean_text(re.sub(r"<[^>]+>", " ", paragraph))
-            if len(text) > 28 and not any(x in text.lower() for x in ["copyright", "advertisement", "read more"]):
-                valid.append(text)
         if valid:
-            return " ".join(valid[:6])
+            return " ".join(valid[:10])
         return None
 
     def _is_preferred_story_image(self, url: str) -> bool:

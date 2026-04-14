@@ -1,24 +1,33 @@
 import { NextResponse } from 'next/server';
-import { getServiceClient } from '../../../../lib/supabase-server';
+import { getServiceClient, getUserFromRequest } from '../../../../lib/supabase-server';
 
 export async function GET(
-    _request: Request,
-    { params }: { params: { runId: string } }
+  request: Request,
+  { params }: { params: { runId: string } },
 ) {
-    try {
-        const sb = getServiceClient();
-        const { data: run, error } = await sb
-            .from('agent_runs')
-            .select('id, status, current_step, stream_url, created_at, started_at, finished_at')
-            .eq('id', params.runId)
-            .single();
-
-        if (error || !run) {
-            return NextResponse.json({ error: 'Run not found' }, { status: 404 });
-        }
-
-        return NextResponse.json({ run });
-    } catch (err: any) {
-        return NextResponse.json({ error: err.message }, { status: 500 });
+  try {
+    const user = await getUserFromRequest(request);
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+
+    const sb = getServiceClient();
+    const { data: run, error } = await sb
+      .from('agent_runs')
+      .select('id, status, current_step, created_at, started_at, finished_at, agent_id, created_by')
+      .eq('id', params.runId)
+      .eq('created_by', user.id)
+      .single();
+
+    if (error || !run) {
+      return NextResponse.json({ error: 'Run not found' }, { status: 404 });
+    }
+
+    return NextResponse.json(run);
+  } catch (err: any) {
+    return NextResponse.json(
+      { error: err.message || 'Unable to load run' },
+      { status: 500 },
+    );
+  }
 }
