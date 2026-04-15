@@ -116,11 +116,20 @@ class AgentJobRunner:
 
         gemini_path = utils_dir / "gemini_client.py"
         if gemini_path.exists():
-            spec = importlib.util.spec_from_file_location("utils.gemini_client", str(gemini_path))
-            if spec and spec.loader:
-                module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(module)
-                sys.modules["utils.gemini_client"] = module
+            try:
+                spec = importlib.util.spec_from_file_location("utils.gemini_client", str(gemini_path))
+                if spec and spec.loader:
+                    module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(module)
+                    sys.modules["utils.gemini_client"] = module
+            except Exception as exc:
+                print(f"[agent_runner] Failed to load utils/gemini_client.py: {exc}")
+                print("[agent_runner] Installing fallback GeminiClient shim...")
+                self._install_gemini_client_fallback()
+
+        # Ensure the module is always registered even if gemini_client.py doesn't exist
+        if "utils.gemini_client" not in sys.modules:
+            self._install_gemini_client_fallback()
 
     def _install_gemini_client_fallback(self) -> None:
         if "utils.gemini_client" in sys.modules:

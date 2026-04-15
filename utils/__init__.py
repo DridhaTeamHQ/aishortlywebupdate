@@ -98,7 +98,12 @@ def _install_gemini_client_fallback() -> None:
     sys.modules["utils.gemini_client"] = mod
 
 
-_install_gemini_client_fallback()
+# Try to load the real gemini_client module first, fall back to shim if it fails
+if "utils.gemini_client" not in sys.modules:
+    try:
+        from utils import gemini_client as _real_gc  # noqa: F401
+    except Exception:
+        _install_gemini_client_fallback()
 
 GeminiClient = sys.modules["utils.gemini_client"].GeminiClient
 __all__ = ["GeminiClient"]
