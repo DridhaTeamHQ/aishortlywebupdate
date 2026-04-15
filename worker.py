@@ -209,7 +209,7 @@ def _execute_run_inline(run: Dict[str, Any]) -> None:
 
     try:
         AgentJobRunner = _load_agent_job_runner()
-        repo_path = os.getenv("AI_AGENT_REPO_PATH", "external/ai-agent-browser")
+        repo_path = os.getenv("AI_AGENT_REPO_PATH", ".")
         runner = AgentJobRunner(repo_path=repo_path, cancel_check=cancel_check, event_sink=event_sink)
         result = asyncio.run(runner.run())
         final_status = result.status

@@ -68,11 +68,21 @@ class AgentJobRunner:
         return importlib.import_module("core.orchestrator")
 
     def _resolve_agent_repo_root(self) -> Path:
-        if self.repo_path:
-            return Path(self.repo_path)
-
         current_repo_root = Path(__file__).resolve().parents[2]
         external_repo_root = current_repo_root / "external" / "ai-agent-browser"
+
+        if self.repo_path:
+            configured = Path(self.repo_path)
+            if configured.exists():
+                return configured
+            # Railway/Vercel deployments may skip submodules; fall back to local repo code.
+            if configured.is_absolute():
+                return current_repo_root
+            relative_to_repo = current_repo_root / configured
+            if relative_to_repo.exists():
+                return relative_to_repo
+            return current_repo_root
+
         if external_repo_root.exists():
             return external_repo_root
         return current_repo_root
