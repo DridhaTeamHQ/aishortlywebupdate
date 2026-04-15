@@ -100,3 +100,5 @@ def _install_gemini_client_fallback() -> None:
 
 _install_gemini_client_fallback()
 
+GeminiClient = sys.modules["utils.gemini_client"].GeminiClient
+__all__ = ["GeminiClient"]

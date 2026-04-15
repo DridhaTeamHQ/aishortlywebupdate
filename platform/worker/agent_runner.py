@@ -69,22 +69,20 @@ class AgentJobRunner:
 
     def _resolve_agent_repo_root(self) -> Path:
         current_repo_root = Path(__file__).resolve().parents[2]
-        external_repo_root = current_repo_root / "external" / "ai-agent-browser"
+        local_repo_valid = self._is_valid_repo_root(current_repo_root)
 
         if self.repo_path:
             configured = Path(self.repo_path)
-            if self._is_valid_repo_root(configured):
-                return configured
-            # Railway/Vercel deployments may skip submodules; fall back to local repo code.
-            if configured.is_absolute():
-                return current_repo_root
-            relative_to_repo = current_repo_root / configured
-            if self._is_valid_repo_root(relative_to_repo):
-                return relative_to_repo
+            resolved = configured if configured.is_absolute() else (current_repo_root / configured)
+            if self._is_valid_repo_root(resolved):
+                # Prefer local project code by default so missing/stale submodules never break runtime.
+                if local_repo_valid and resolved.resolve() != current_repo_root.resolve():
+                    return current_repo_root
+                return resolved
             return current_repo_root
 
-        if self._is_valid_repo_root(external_repo_root):
-            return external_repo_root
+        if local_repo_valid:
+            return current_repo_root
         return current_repo_root
 
     def _is_valid_repo_root(self, root: Path) -> bool:

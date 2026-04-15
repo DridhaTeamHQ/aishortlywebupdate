@@ -8,7 +8,10 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from utils.gemini_client import GeminiClient
+try:
+    from utils.gemini_client import GeminiClient
+except Exception:
+    from utils import GeminiClient
 from utils.logger import get_logger
 
 

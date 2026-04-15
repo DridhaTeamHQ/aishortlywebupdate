@@ -15,7 +15,10 @@ from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
 import httpx
 
-from utils.gemini_client import GeminiClient
+try:
+    from utils.gemini_client import GeminiClient
+except Exception:
+    from utils import GeminiClient
 from utils.image_utils import get_image_dimensions
 from utils.logger import get_logger
 
