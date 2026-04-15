@@ -1,0 +1,15 @@
+{
+  "name": "aishortlywebupdate-root",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "postinstall": "npm --prefix web install",
+    "dev": "npm --prefix web run dev",
+    "build": "npm --prefix web run build",
+    "start": "npm --prefix web run start",
+    "lint": "npm --prefix web run lint"
+  },
+  "engines": {
+    "node": "18.x || 20.x"
+  }
+}

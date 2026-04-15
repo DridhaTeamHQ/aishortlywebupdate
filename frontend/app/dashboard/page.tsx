@@ -25,6 +25,8 @@ type EventRow = {
 const ACTIVE_STATUSES = new Set(['queued', 'running', 'stopping']);
 const POLL_INTERVAL = 2000; // 2 seconds
 const STOP_STALE_MS = 15000;
+const QUEUE_STALE_MS = 45000;
+const ORPHAN_RUN_MAX_AGE_MS = 10 * 60 * 1000;
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -91,19 +93,27 @@ export default function DashboardPage() {
 
       if (activeRuns && activeRuns.length > 0) {
         const activeRun = activeRuns[0] as RunRow;
-        setActiveRunId(activeRun.id);
-        setRun(activeRun);
-        if (activeRun.status === 'stopping') {
-          stopRequestedAtRef.current = Date.now();
-        }
+        const createdAtMs = activeRun.created_at ? new Date(activeRun.created_at).getTime() : 0;
+        const isLikelyOrphan =
+          (activeRun.status === 'queued' || activeRun.status === 'stopping') &&
+          createdAtMs > 0 &&
+          (Date.now() - createdAtMs) > ORPHAN_RUN_MAX_AGE_MS;
 
-        // Load existing events for this run
-        const { data: existingEvents } = await supabase
-          .from('agent_run_events')
-          .select('id,event_type,payload,created_at')
-          .eq('run_id', activeRun.id)
-          .order('id', { ascending: true });
-        if (existingEvents) setEvents(existingEvents);
+        if (!isLikelyOrphan) {
+          setActiveRunId(activeRun.id);
+          setRun(activeRun);
+          if (activeRun.status === 'stopping') {
+            stopRequestedAtRef.current = Date.now();
+          }
+
+          // Load existing events for this run
+          const { data: existingEvents } = await supabase
+            .from('agent_run_events')
+            .select('id,event_type,payload,created_at')
+            .eq('run_id', activeRun.id)
+            .order('id', { ascending: true });
+          if (existingEvents) setEvents(existingEvents);
+        }
       }
     })
       .catch((error: Error) => {
@@ -123,11 +133,25 @@ export default function DashboardPage() {
     const poll = async () => {
       try {
         // Fetch run status
-        const { data: runData } = await supabase
+        const { data: runData, error: runError } = await supabase
           .from('agent_runs')
           .select('id,status,current_step,created_at,started_at,finished_at')
           .eq('id', activeRunId)
           .single();
+
+        // If the run row no longer exists (commonly surfaced as 406/PGRST116), clear stale UI state.
+        if (runError && (runError.code === 'PGRST116' || runError.message?.includes('JSON object requested'))) {
+          setRun(null);
+          setEvents([]);
+          setActiveRunId(null);
+          stopRequestedAtRef.current = null;
+          forceCancellingRef.current = false;
+          if (pollRef.current) {
+            clearInterval(pollRef.current);
+            pollRef.current = null;
+          }
+          return;
+        }
 
         if (runData) setRun(runData as RunRow);
 
@@ -148,7 +172,7 @@ export default function DashboardPage() {
           });
         }
 
-        if (runData?.status === 'stopping') {
+        if (runData?.status === 'stopping' || runData?.status === 'queued') {
           const lastEventTime = eventsData && eventsData.length > 0
             ? new Date(eventsData[eventsData.length - 1].created_at).getTime()
             : 0;
@@ -159,10 +183,11 @@ export default function DashboardPage() {
             stopRequestedAtRef.current || 0,
           );
 
+          const staleLimit = runData.status === 'queued' ? QUEUE_STALE_MS : STOP_STALE_MS;
           if (
             !forceCancellingRef.current &&
             runActivityTime > 0 &&
-            (Date.now() - runActivityTime) >= STOP_STALE_MS
+            (Date.now() - runActivityTime) >= staleLimit
           ) {
             forceCancellingRef.current = true;
             const session = (await supabase.auth.getSession()).data.session;
@@ -272,9 +297,19 @@ export default function DashboardPage() {
     }
 
     setDashboardError(null);
-    stopRequestedAtRef.current = Date.now();
+    if (payload.status === 'stopping') {
+      stopRequestedAtRef.current = Date.now();
+    } else {
+      stopRequestedAtRef.current = null;
+      forceCancellingRef.current = false;
+    }
     // Optimistic update
-    setRun((prev) => prev ? { ...prev, status: 'stopping' } : prev);
+    setRun((prev) => prev ? {
+      ...prev,
+      status: payload.status || 'stopping',
+      current_step: payload.status === 'cancelled' ? 'cancelled' : prev.current_step,
+      finished_at: payload.status === 'cancelled' ? new Date().toISOString() : prev.finished_at,
+    } : prev);
   }, [activeRunId]);
 
   const signOut = async () => {

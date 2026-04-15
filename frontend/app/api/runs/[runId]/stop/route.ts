@@ -58,6 +58,33 @@ export async function POST(
       return NextResponse.json({ ok: true, status: 'cancelled', forced: true });
     }
 
+    if (run.status === 'queued') {
+      const finishedAt = new Date().toISOString();
+      const { error: cancelQueuedError } = await sb
+        .from('agent_runs')
+        .update({
+          status: 'cancelled',
+          current_step: 'cancelled',
+          finished_at: finishedAt,
+        })
+        .eq('id', runId)
+        .eq('created_by', user.id);
+
+      if (cancelQueuedError) {
+        return NextResponse.json({ error: cancelQueuedError.message }, { status: 500 });
+      }
+
+      await sb.from('agent_run_events').insert({
+        run_id: runId,
+        agent_id: run.agent_id,
+        event_type: 'RUN_FINISHED',
+        payload: { status: 'cancelled', error: 'cancelled_while_queued' },
+        created_by: user.id,
+      });
+
+      return NextResponse.json({ ok: true, status: 'cancelled', forced: false });
+    }
+
     if (!['queued', 'running'].includes(run.status)) {
       return NextResponse.json(
         { error: `Cannot stop a run with status: ${run.status}` },
