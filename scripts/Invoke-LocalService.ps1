@@ -50,7 +50,7 @@ function Import-DotEnvFile {
 $root = Resolve-Path (Join-Path $PSScriptRoot '..')
 
 Import-DotEnvFile (Join-Path $root '.env')
-Import-DotEnvFile (Join-Path $root 'web\.env.local')
+Import-DotEnvFile (Join-Path $root 'frontend\.env.local')
 
 if (-not $env:BROWSER_STREAM_BASE_URL) {
   $env:BROWSER_STREAM_BASE_URL = 'http://localhost:8090'

@@ -3,7 +3,7 @@ services:
   - type: web
     name: shortly-dashboard
     env: node
-    rootDir: web
+    rootDir: frontend
     buildCommand: npm install && npm run build
     startCommand: npm run start
     plan: starter
