@@ -1,65 +1,43 @@
-# Autonomous AI News Editor
+# Unified AI Agent Platform
 
-A fully autonomous news editor that scrapes articles from trusted sources, translates them to Telugu, and publishes them to a CMS - all in a single browser-based process.
+A fully decoupled, scalable agent platform. The frontend operates on Vercel while a robust Python long-running worker executes browser-based tasks on Railway. They communicate exclusively via Supabase Queues and Realtime.
 
-## Quick Start
+## 🚀 Deployment Guide
+
+This repository is pre-configured to deploy effortlessly across Vercel and Railway with **zero code changes required**. 
+
+Please see **[DEPLOYMENT.md](DEPLOYMENT.md)** for exact, step-by-step instructions on setting up Vercel (Frontend), Railway (Backend Worker), and Supabase (Database + Queue).
+
+## Setup Local Environment
 
 ### 1. Install Dependencies
 
 ```bash
-# Install Python packages
+# Install Backend worker dependencies
 pip install -r requirements.txt
-
-# Install Playwright browser (use python -m playwright, not just playwright)
 python -m playwright install chromium
+
+# Install Frontend dependencies
+npm install
+npm --prefix frontend install
 ```
 
-### 2. Setup Environment Variables
+### 2. Environment Variables
+Copy `env.example` to `.env` and fill out the required variables for your setup. The file is cleanly split into Frontend and Backend variables.
 
-Create a `.env` file in the project root:
+### 3. Run Locally
 
-```env
-# CMS Credentials (REQUIRED)
-CMS_URL=https://your-cms-url.com
-CMS_EMAIL=your-email@example.com
-CMS_PASSWORD=your-password
-CMS_ROLE=State Sub Editor
+Open two terminal tabs:
 
-# OpenAI API Key (REQUIRED)
-OPENAI_API_KEY=sk-your-openai-api-key-here
-
-# Browser Settings (OPTIONAL)
-HEADLESS=false
-SLOW_MO=400
-USER_DATA_DIR=.playwright
-SCREENSHOTS_DIR=artifacts/screenshots
-DOWNLOADS_DIR=artifacts/downloads
-```
-
-**Important**: 
-- Copy `env.example` to `.env` and fill in your actual values
-- `CMS_URL`, `CMS_EMAIL`, `CMS_PASSWORD`, and `OPENAI_API_KEY` are **REQUIRED**
-- `HEADLESS=false` means browser will be visible (recommended for first run)
-- `SLOW_MO=400` adds 400ms delay between actions (makes it easier to watch)
-
-### 3. Run the Editor
-
+**Terminal 1 (Backend Worker)**
 ```bash
-python main.py
+python worker.py
 ```
 
-## What Happens When You Run
-
-1. **Browser Opens** (visible, headful mode)
-2. **CMS Login** - Automatically logs into your CMS
-3. **Article Scraping** - Tries to scrape from BBC/Al Jazeera/NBC (in order)
-4. **Summarization** - Generates English summary (300-360 chars)
-5. **Telugu Translation** - Translates to Telugu (300-360 chars)
-6. **Category Selection** - Decides category using keywords
-7. **CMS Publishing** - Fills form and publishes article
-8. **Success** - Stops when one article is published
-
-The system will try up to **5 articles** until one is successfully published.
+**Terminal 2 (Frontend Dashboard)**
+```bash
+npm run dev
+```
 
 ## Architecture
 
