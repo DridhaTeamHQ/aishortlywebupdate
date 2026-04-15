@@ -72,11 +72,19 @@ class AgentJobRunner:
         self._prepare_repo_utils_imports(repo_root)
         try:
             return importlib.import_module("core.orchestrator")
-        except ModuleNotFoundError as exc:
+        except (ImportError, ModuleNotFoundError) as exc:
             # Some environments resolve a third-party `utils` package first.
             # If that happens, force-install a compatibility `utils.gemini_client` shim and retry once.
-            if exc.name == "utils.gemini_client" or "utils.gemini_client" in str(exc):
+            err_msg = str(exc)
+            if "utils.gemini_client" in err_msg or "GeminiClient" in err_msg or "utils" in err_msg:
                 self._install_gemini_client_fallback()
+                # Also patch the bare utils module so `from utils import GeminiClient` works
+                if "utils" in sys.modules and "utils.gemini_client" in sys.modules:
+                    sys.modules["utils"].GeminiClient = sys.modules["utils.gemini_client"].GeminiClient
+                # Clear partially-loaded modules before retry
+                for mod_name in list(sys.modules):
+                    if mod_name == "core" or mod_name.startswith("core."):
+                        sys.modules.pop(mod_name, None)
                 return importlib.import_module("core.orchestrator")
             raise
 
@@ -130,6 +138,12 @@ class AgentJobRunner:
         # Ensure the module is always registered even if gemini_client.py doesn't exist
         if "utils.gemini_client" not in sys.modules:
             self._install_gemini_client_fallback()
+
+        # Patch the bare utils module with GeminiClient so `from utils import GeminiClient` works
+        if "utils.gemini_client" in sys.modules:
+            gc_mod = sys.modules["utils.gemini_client"]
+            if hasattr(gc_mod, "GeminiClient"):
+                sys.modules["utils"].GeminiClient = gc_mod.GeminiClient
 
     def _install_gemini_client_fallback(self) -> None:
         if "utils.gemini_client" in sys.modules:
