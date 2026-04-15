@@ -831,113 +831,77 @@ class HardenedOrchestrator:
         return False
 
     async def _execute_browser_workflow(self, data: ArticleData, url: str) -> bool:
-        async def guarded(coro):
-            task = asyncio.create_task(coro)
-            try:
-                while True:
-                    try:
-                        return await asyncio.wait_for(task, timeout=0.5)
-                    except asyncio.TimeoutError:
-                        if not self._is_cancelled():
-                            continue
-                        self.logger.warning(f"Cancellation requested during browser workflow. url={url}")
-                        with suppress(Exception):
-                            await self.publisher.stop()
-                        task.cancel()
-                        with suppress(asyncio.CancelledError, Exception):
-                            await task
-                        return None
-            finally:
-                if not task.done():
-                    task.cancel()
-                    with suppress(asyncio.CancelledError):
-                        await task
-
-        create_ok = await guarded(self.publisher.create_article())
-        if create_ok is None:
-            return False
-        if not create_ok:
-            recover_ok = await guarded(self._recover_browser_session())
-            if recover_ok is None or not recover_ok:
+        if not await self.publisher.create_article():
+            if not await self._recover_browser_session():
                 return False
             await asyncio.sleep(2)
-            retry_create_ok = await guarded(self.publisher.create_article())
-            if retry_create_ok is None or not retry_create_ok:
+            if not await self.publisher.create_article():
                 return False
 
-        fill_ok = await guarded(self.publisher.fill_form(data))
-        if fill_ok is None:
-            return False
-        if not fill_ok:
-            recover_ok = await guarded(self._recover_browser_session())
-            if recover_ok is None or not recover_ok:
+        if not await self.publisher.fill_form(data):
+            if not await self._recover_browser_session():
                 return False
             await asyncio.sleep(2)
             return False
 
         for _attempt in range(self.max_publish_retries):
-            publish_ok = await guarded(self.publisher.publish())
-            if publish_ok is None:
-                return False
-            if publish_ok:
-                return True
-            await asyncio.sleep(2)
+            # Check for cancellation before crucial step
             if self._is_cancelled():
+                self.logger.warning(f"Cancellation requested during browser workflow. url={url}")
+                with suppress(Exception):
+                    await self.publisher.stop()
                 return False
+                
+            if await self.publisher.publish():
+                return True
+                
+            await asyncio.sleep(2)
             if self.publisher.page is None or self.publisher.page.is_closed():
-                recover_ok = await guarded(self._recover_browser_session())
-                if recover_ok is None or not recover_ok:
+                if not await self._recover_browser_session():
                     return False
         return False
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 Orchestrator = HardenedOrchestrator
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
