@@ -73,19 +73,22 @@ class AgentJobRunner:
 
         if self.repo_path:
             configured = Path(self.repo_path)
-            if configured.exists():
+            if self._is_valid_repo_root(configured):
                 return configured
             # Railway/Vercel deployments may skip submodules; fall back to local repo code.
             if configured.is_absolute():
                 return current_repo_root
             relative_to_repo = current_repo_root / configured
-            if relative_to_repo.exists():
+            if self._is_valid_repo_root(relative_to_repo):
                 return relative_to_repo
             return current_repo_root
 
-        if external_repo_root.exists():
+        if self._is_valid_repo_root(external_repo_root):
             return external_repo_root
         return current_repo_root
+
+    def _is_valid_repo_root(self, root: Path) -> bool:
+        return root.exists() and (root / "core" / "orchestrator.py").exists()
 
     async def _safe_emit(self, event_type: str, payload: Dict[str, Any]) -> None:
         try:
