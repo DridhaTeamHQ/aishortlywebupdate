@@ -1,6 +1,4 @@
-const FALLBACK_CONTROL_API_URL =
-  process.env.INTERNAL_CONTROL_API_BASE_URL ||
-  `http://127.0.0.1:${process.env.PORT || '3000'}/control-api`;
+const FALLBACK_CONTROL_API_URL = 'http://localhost:8000';
 
 function getControlApiBaseUrl(): string {
   const baseUrl =
