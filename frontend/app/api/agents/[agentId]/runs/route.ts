@@ -1,6 +1,86 @@
 import { NextResponse } from 'next/server';
 import { getServiceClient, getUserFromRequest } from '../../../../../lib/supabase-server';
 
+const QUEUE_STALE_MS = 45_000;
+const STOP_STALE_MS = 15_000;
+const RUN_STALE_MS = 10 * 60 * 1000;
+
+type ActiveRun = {
+  id: string;
+  status: string;
+  created_at: string | null;
+  started_at: string | null;
+};
+
+function toMillis(value: string | null | undefined): number {
+  if (!value) return 0;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+async function recoverStaleRuns(
+  sb: ReturnType<typeof getServiceClient>,
+  agentId: string,
+  userId: string,
+) {
+  const { data: activeRuns } = await sb
+    .from('agent_runs')
+    .select('id, status, created_at, started_at')
+    .eq('agent_id', agentId)
+    .eq('created_by', userId)
+    .in('status', ['queued', 'running', 'stopping']);
+
+  const runs = (activeRuns || []) as ActiveRun[];
+  if (!runs.length) return;
+
+  const now = Date.now();
+  for (const run of runs) {
+    const { data: latestEvent } = await sb
+      .from('agent_run_events')
+      .select('created_at')
+      .eq('run_id', run.id)
+      .order('id', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    const activityAt = Math.max(
+      toMillis(run.started_at),
+      toMillis(run.created_at),
+      toMillis((latestEvent as any)?.created_at || null),
+    );
+    if (activityAt <= 0) continue;
+
+    const staleWindow =
+      run.status === 'queued'
+        ? QUEUE_STALE_MS
+        : run.status === 'stopping'
+          ? STOP_STALE_MS
+          : RUN_STALE_MS;
+
+    if ((now - activityAt) < staleWindow) continue;
+
+    const finishedAt = new Date().toISOString();
+    await sb
+      .from('agent_runs')
+      .update({
+        status: 'cancelled',
+        current_step: 'cancelled',
+        finished_at: finishedAt,
+      })
+      .eq('id', run.id)
+      .eq('created_by', userId)
+      .in('status', ['queued', 'running', 'stopping']);
+
+    await sb.from('agent_run_events').insert({
+      run_id: run.id,
+      agent_id: agentId,
+      event_type: 'RUN_FINISHED',
+      payload: { status: 'cancelled', error: 'auto_cancelled_stale_run' },
+      created_by: userId,
+    });
+  }
+}
+
 export async function POST(
   request: Request,
   { params }: { params: { agentId: string } },
@@ -38,6 +118,9 @@ export async function POST(
     if (!agent.enabled) {
       return NextResponse.json({ error: 'Agent is disabled' }, { status: 400 });
     }
+
+    // Recover stale runs so stop/restart cycles don't remain blocked by old rows.
+    await recoverStaleRuns(sb, agentId, user.id);
 
     const { data: activeRuns } = await sb
       .from('agent_runs')
