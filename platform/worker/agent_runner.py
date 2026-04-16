@@ -2,8 +2,9 @@
 Agent job runner for Railway/worker execution.
 
 This loader is defensive against import-path issues in hosted environments.
-It guarantees that utils.gemini_client resolves, even when the file is missing,
-by installing an OpenAI-backed compatibility shim.
+It guarantees that legacy ``utils.gemini_client`` and newer ``utils.model_client``
+both resolve, even when only one file exists, by installing an OpenAI-backed
+compatibility shim.
 """
 
 import asyncio
@@ -83,14 +84,20 @@ class AgentJobRunner:
         except (ImportError, ModuleNotFoundError) as exc:
             err = str(exc)
             name = getattr(exc, "name", "")
-            if "utils.gemini_client" in err or "GeminiClient" in err or name in {"utils", "utils.gemini_client"}:
+            if (
+                "utils.gemini_client" in err
+                or "utils.model_client" in err
+                or "GeminiClient" in err
+                or name in {"utils", "utils.gemini_client", "utils.model_client"}
+            ):
                 self._install_gemini_client_fallback()
                 if (
                     "utils" in sys.modules
-                    and "utils.gemini_client" in sys.modules
-                    and hasattr(sys.modules["utils.gemini_client"], "GeminiClient")
+                    and any(key in sys.modules for key in ("utils.model_client", "utils.gemini_client"))
                 ):
-                    sys.modules["utils"].GeminiClient = sys.modules["utils.gemini_client"].GeminiClient
+                    model_module = sys.modules.get("utils.model_client") or sys.modules.get("utils.gemini_client")
+                    if model_module is not None and hasattr(model_module, "GeminiClient"):
+                        sys.modules["utils"].GeminiClient = model_module.GeminiClient
 
                 for mod_name in list(sys.modules):
                     if mod_name == "core" or mod_name.startswith("core."):
@@ -108,52 +115,45 @@ class AgentJobRunner:
             utils_pkg.__file__ = str((utils_dir / "__init__.py").resolve())
         sys.modules["utils"] = utils_pkg
 
-        gemini_path = utils_dir / "gemini_client.py"
-        if gemini_path.exists():
-            try:
-                spec = importlib.util.spec_from_file_location("utils.gemini_client", str(gemini_path.resolve()))
-                if spec and spec.loader:
-                    module = importlib.util.module_from_spec(spec)
-                    sys.modules["utils.gemini_client"] = module
-                    spec.loader.exec_module(module)
-            except Exception as exc:
-                sys.modules.pop("utils.gemini_client", None)
-                print(f"[agent_runner] Warning: could not pre-load gemini_client: {exc}")
-                self._install_gemini_client_fallback()
-        else:
+        model_module = self._preload_utils_module(utils_dir / "model_client.py", "utils.model_client")
+        gemini_module = self._preload_utils_module(utils_dir / "gemini_client.py", "utils.gemini_client")
+
+        if model_module is None and gemini_module is None:
             self._install_gemini_client_fallback()
+        elif model_module is not None and gemini_module is None:
+            sys.modules["utils.gemini_client"] = model_module
+        elif gemini_module is not None and model_module is None:
+            sys.modules["utils.model_client"] = gemini_module
 
-        if "utils.gemini_client" in sys.modules and hasattr(sys.modules["utils.gemini_client"], "GeminiClient"):
-            utils_pkg.GeminiClient = sys.modules["utils.gemini_client"].GeminiClient
+        resolved_model_module = sys.modules.get("utils.model_client") or sys.modules.get("utils.gemini_client")
+        if resolved_model_module is not None and hasattr(resolved_model_module, "GeminiClient"):
+            utils_pkg.GeminiClient = resolved_model_module.GeminiClient
 
-        logger_path = utils_dir / "logger.py"
-        if logger_path.exists():
-            try:
-                spec = importlib.util.spec_from_file_location("utils.logger", str(logger_path.resolve()))
-                if spec and spec.loader:
-                    module = importlib.util.module_from_spec(spec)
-                    sys.modules["utils.logger"] = module
-                    spec.loader.exec_module(module)
-            except Exception as exc:
-                sys.modules.pop("utils.logger", None)
-                print(f"[agent_runner] Warning: could not pre-load logger: {exc}")
+        self._preload_utils_module(utils_dir / "logger.py", "utils.logger")
+        self._preload_utils_module(utils_dir / "image_utils.py", "utils.image_utils")
 
-        image_utils_path = utils_dir / "image_utils.py"
-        if image_utils_path.exists():
-            try:
-                spec = importlib.util.spec_from_file_location("utils.image_utils", str(image_utils_path.resolve()))
-                if spec and spec.loader:
-                    module = importlib.util.module_from_spec(spec)
-                    sys.modules["utils.image_utils"] = module
-                    spec.loader.exec_module(module)
-            except Exception as exc:
-                sys.modules.pop("utils.image_utils", None)
-                print(f"[agent_runner] Warning: could not pre-load image_utils: {exc}")
+    def _preload_utils_module(self, path: Path, module_name: str):
+        if not path.exists():
+            return None
+        try:
+            spec = importlib.util.spec_from_file_location(module_name, str(path.resolve()))
+            if spec and spec.loader:
+                module = importlib.util.module_from_spec(spec)
+                sys.modules[module_name] = module
+                spec.loader.exec_module(module)
+                return module
+        except Exception as exc:
+            sys.modules.pop(module_name, None)
+            print(f"[agent_runner] Warning: could not pre-load {module_name}: {exc}")
+        return None
 
     def _install_gemini_client_fallback(self) -> None:
-        existing = sys.modules.get("utils.gemini_client")
+        existing = sys.modules.get("utils.model_client") or sys.modules.get("utils.gemini_client")
         if existing is not None and hasattr(existing, "GeminiClient"):
+            sys.modules["utils.model_client"] = existing
+            sys.modules["utils.gemini_client"] = existing
             return
+        sys.modules.pop("utils.model_client", None)
         sys.modules.pop("utils.gemini_client", None)
 
         if "utils" not in sys.modules:
@@ -166,7 +166,7 @@ class AgentJobRunner:
         except Exception:
             OpenAI = None  # type: ignore
 
-        module = types.ModuleType("utils.gemini_client")
+        module = types.ModuleType("utils.model_client")
 
         class GeminiClient:  # pylint: disable=too-few-public-methods
             def __init__(self, api_key: str | None = None, model: str | None = None):
@@ -234,6 +234,7 @@ class AgentJobRunner:
                 )
 
         module.GeminiClient = GeminiClient
+        sys.modules["utils.model_client"] = module
         sys.modules["utils.gemini_client"] = module
         sys.modules["utils"].GeminiClient = module.GeminiClient
 

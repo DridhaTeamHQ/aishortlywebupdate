@@ -88,6 +88,23 @@ class AgentRunnerImportTests(unittest.TestCase):
         self.assertTrue(hasattr(repaired, "GeminiClient"))
         self.assertTrue(hasattr(sys.modules["utils"], "GeminiClient"))
 
+    def test_fallback_populates_model_and_legacy_aliases(self):
+        sys.modules["utils"] = type(sys)("utils")
+        sys.modules["utils"].__path__ = []
+
+        runner = self.runner_module.AgentJobRunner(
+            cancel_check=lambda: False,
+            event_sink=lambda *_args, **_kwargs: None,
+            repo_path=".",
+        )
+
+        runner._install_gemini_client_fallback()
+
+        self.assertIn("utils.model_client", sys.modules)
+        self.assertIn("utils.gemini_client", sys.modules)
+        self.assertIs(sys.modules["utils.model_client"], sys.modules["utils.gemini_client"])
+        self.assertTrue(hasattr(sys.modules["utils.model_client"], "GeminiClient"))
+
 
 if __name__ == "__main__":
     unittest.main()

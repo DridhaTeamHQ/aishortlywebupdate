@@ -16,7 +16,7 @@ from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 import httpx
 
 try:
-    from utils.gemini_client import GeminiClient
+    from utils.model_client import GeminiClient
 except Exception:
     from utils import GeminiClient
 from utils.image_utils import get_image_dimensions
