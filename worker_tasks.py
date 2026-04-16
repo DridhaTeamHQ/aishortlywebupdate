@@ -10,6 +10,25 @@ from supabase import create_client
 from platform.worker.agent_runner import AgentJobRunner
 
 
+def _effective_repo_path(configured: str) -> str:
+    value = (configured or ".").strip() or "."
+    normalized = value.replace("\\", "/").lower()
+    hosted = any(
+        os.getenv(name)
+        for name in (
+            "RAILWAY_PROJECT_ID",
+            "RAILWAY_ENVIRONMENT_ID",
+            "RENDER",
+            "RENDER_SERVICE_ID",
+            "VERCEL",
+            "VERCEL_ENV",
+        )
+    )
+    if hosted and "external/ai-agent-browser" in normalized:
+        return "."
+    return value
+
+
 def _settings() -> Dict[str, str]:
     return {
         "SUPABASE_URL": os.getenv("SUPABASE_URL", "").strip(),
@@ -90,7 +109,7 @@ def execute_agent_run(run_id: str, agent_id: str, user_id: str) -> None:
     runner = AgentJobRunner(
         cancel_check=cancel_check,
         event_sink=emit,
-        repo_path=cfg["AI_AGENT_REPO_PATH"] or None,
+        repo_path=_effective_repo_path(cfg["AI_AGENT_REPO_PATH"]),
     )
     result = asyncio.run(runner.run())
 

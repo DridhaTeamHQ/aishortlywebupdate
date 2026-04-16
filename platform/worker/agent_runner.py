@@ -245,6 +245,8 @@ class AgentJobRunner:
         if self.repo_path:
             configured = Path(self.repo_path)
             resolved = configured if configured.is_absolute() else (current_repo_root / configured)
+            if self._should_force_local_repo(resolved, current_repo_root) and local_repo_valid:
+                return current_repo_root
             if self._is_valid_repo_root(resolved):
                 if local_repo_valid and resolved.resolve() != current_repo_root.resolve():
                     return current_repo_root
@@ -257,6 +259,29 @@ class AgentJobRunner:
 
     def _is_valid_repo_root(self, root: Path) -> bool:
         return root.exists() and (root / "core" / "orchestrator.py").exists()
+
+    def _should_force_local_repo(self, resolved: Path, current_repo_root: Path) -> bool:
+        """Prefer the checked-in repo root for hosted deployments."""
+        try:
+            resolved_normalized = str(resolved.resolve()).replace("\\", "/").lower()
+        except Exception:
+            resolved_normalized = str(resolved).replace("\\", "/").lower()
+
+        current_normalized = str(current_repo_root.resolve()).replace("\\", "/").lower()
+        if resolved_normalized == current_normalized:
+            return False
+
+        hosted_markers = (
+            "RAILWAY_PROJECT_ID",
+            "RAILWAY_ENVIRONMENT_ID",
+            "RENDER",
+            "RENDER_SERVICE_ID",
+            "VERCEL",
+            "VERCEL_ENV",
+        )
+        hosted = any(os.getenv(marker) for marker in hosted_markers)
+        legacy_external = "/external/ai-agent-browser" in resolved_normalized
+        return hosted and legacy_external
 
     async def _safe_emit(self, event_type: str, payload: Dict[str, Any]) -> None:
         try:

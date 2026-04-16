@@ -1,4 +1,5 @@
 import importlib.util
+import os
 import sys
 import tempfile
 import textwrap
@@ -32,6 +33,7 @@ class AgentRunnerImportTests(unittest.TestCase):
             if name in {"core", "config", "utils"} or name.startswith(("core.", "config.", "utils.")):
                 sys.modules.pop(name, None)
         sys.modules.update(self._original_modules)
+        os.environ.pop("RAILWAY_PROJECT_ID", None)
 
     def test_loader_recovers_when_repo_gemini_client_is_broken(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -104,6 +106,18 @@ class AgentRunnerImportTests(unittest.TestCase):
         self.assertIn("utils.gemini_client", sys.modules)
         self.assertIs(sys.modules["utils.model_client"], sys.modules["utils.gemini_client"])
         self.assertTrue(hasattr(sys.modules["utils.model_client"], "GeminiClient"))
+
+    def test_hosted_runner_ignores_legacy_external_repo_path(self):
+        os.environ["RAILWAY_PROJECT_ID"] = "proj_123"
+        runner = self.runner_module.AgentJobRunner(
+            cancel_check=lambda: False,
+            event_sink=lambda *_args, **_kwargs: None,
+            repo_path="external/ai-agent-browser",
+        )
+
+        resolved = runner._resolve_agent_repo_root()
+        expected = Path(__file__).resolve().parents[1]
+        self.assertEqual(resolved.resolve(), expected.resolve())
 
 
 if __name__ == "__main__":

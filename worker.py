@@ -78,6 +78,26 @@ def _load_agent_job_runner():
     return module.AgentJobRunner
 
 
+def _effective_repo_path() -> str:
+    configured = (os.getenv("AI_AGENT_REPO_PATH", ".") or ".").strip()
+    normalized = configured.replace("\\", "/").lower()
+    hosted = any(
+        os.getenv(name)
+        for name in (
+            "RAILWAY_PROJECT_ID",
+            "RAILWAY_ENVIRONMENT_ID",
+            "RENDER",
+            "RENDER_SERVICE_ID",
+            "VERCEL",
+            "VERCEL_ENV",
+        )
+    )
+    if hosted and "external/ai-agent-browser" in normalized:
+        print("Hosted worker detected legacy AI_AGENT_REPO_PATH; forcing repo root '.'")
+        return "."
+    return configured or "."
+
+
 def _claim_run() -> Optional[Dict[str, Any]]:
     try:
         result = (
@@ -209,7 +229,7 @@ def _execute_run_inline(run: Dict[str, Any]) -> None:
 
     try:
         AgentJobRunner = _load_agent_job_runner()
-        repo_path = os.getenv("AI_AGENT_REPO_PATH", ".")
+        repo_path = _effective_repo_path()
         runner = AgentJobRunner(repo_path=repo_path, cancel_check=cancel_check, event_sink=event_sink)
         result = asyncio.run(runner.run())
         final_status = result.status
