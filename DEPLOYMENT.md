@@ -56,7 +56,7 @@ Default worker runtime values in the Blueprint:
 
 The repo root also includes [railway.json](C:\Users\Tamada\Desktop\Shortly AI Agent\railway.json) for the Python worker:
 
-- Build: `pip install -r requirements.txt && playwright install chromium --with-deps`
+- Build: `pip install --prefer-binary -r requirements.txt && playwright install chromium`
 - Start: `python worker.py`
 
 Required Railway environment variables:
