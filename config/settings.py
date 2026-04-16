@@ -15,6 +15,26 @@ def _get_bool(value: str | None, default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "y"}
 
 
+def _default_headless() -> bool:
+    hosted_markers = (
+        "RAILWAY_PROJECT_ID",
+        "RAILWAY_ENVIRONMENT_ID",
+        "RENDER",
+        "RENDER_SERVICE_ID",
+        "VERCEL",
+        "VERCEL_ENV",
+        "CI",
+    )
+    if any(os.getenv(marker) for marker in hosted_markers):
+        return True
+
+    # Linux containers without a display should default to headless mode.
+    if os.name != "nt" and not os.getenv("DISPLAY"):
+        return True
+
+    return False
+
+
 def _get_image_mode(value: str | None) -> str:
     if not value:
         return "api"
@@ -223,7 +243,7 @@ def get_settings() -> Settings:
         gemini_api_key=os.getenv("GEMINI_API_KEY"),
         openai_api_key=os.getenv("OPENAI_API_KEY"),
         ai_provider=os.getenv("AI_PROVIDER", "openai").strip().lower(),
-        headless=_get_bool(os.getenv("HEADLESS"), False),
+        headless=_get_bool(os.getenv("HEADLESS"), _default_headless()),
         slow_mo=int(os.getenv("SLOW_MO", "0")),
         user_data_dir=os.getenv("USER_DATA_DIR", ".playwright").strip(),
         screenshots_dir=os.getenv("SCREENSHOTS_DIR", "artifacts/screenshots").strip(),

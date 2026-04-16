@@ -10,6 +10,7 @@ import httpx
 
 from playwright.async_api import Browser, BrowserContext, Page, async_playwright
 
+from config.settings import get_settings
 from core.cms.image_finder import GoogleImageFinder
 from utils.image_utils import meets_minimum_resolution
 from utils.logger import get_logger
@@ -48,6 +49,7 @@ class CMSPublisher:
     TIMEOUT = 30000
 
     def __init__(self):
+        self.settings = get_settings()
         self.logger = get_logger("cms")
         self.cms_url = os.getenv("CMS_URL", "")
         self.cms_email = os.getenv("CMS_EMAIL", "")
@@ -64,9 +66,14 @@ class CMSPublisher:
         self.SCREENSHOT_DIR.mkdir(exist_ok=True)
         self.DEBUG_DIR.mkdir(parents=True, exist_ok=True)
 
+    def _launch_kwargs(self) -> Dict[str, Any]:
+        headless = self.settings.headless
+        slow_mo = max(0, int(self.settings.slow_mo))
+        return {"headless": headless, "slow_mo": slow_mo}
+
     async def start(self):
         self.playwright = await async_playwright().start()
-        self.browser = await self.playwright.chromium.launch(headless=False, slow_mo=200)
+        self.browser = await self.playwright.chromium.launch(**self._launch_kwargs())
         self.context = await self.browser.new_context(viewport={"width": 1400, "height": 900})
         self.page = await self.context.new_page()
         self._attach_page_debug_listeners()
@@ -89,7 +96,7 @@ class CMSPublisher:
             if self.playwright is None:
                 self.playwright = await async_playwright().start()
             if self.browser is None or not self.browser.is_connected():
-                self.browser = await self.playwright.chromium.launch(headless=False, slow_mo=200)
+                self.browser = await self.playwright.chromium.launch(**self._launch_kwargs())
 
             recreate_context = self.context is None or self.page is None or self.page.is_closed()
             if recreate_context:
