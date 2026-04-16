@@ -35,6 +35,22 @@ def _default_headless() -> bool:
     return False
 
 
+def _resolve_headless() -> bool:
+    default_headless = _default_headless()
+    configured = os.getenv("HEADLESS")
+    resolved = _get_bool(configured, default_headless)
+
+    # Hosted Linux workers should never try to launch a headed browser unless
+    # the operator explicitly opts in. Old dashboard env vars like HEADLESS=false
+    # can otherwise override safe defaults and break Playwright at runtime.
+    if default_headless and not resolved:
+        allow_headed_hosted = _get_bool(os.getenv("ALLOW_HOSTED_HEADED"), False)
+        if not allow_headed_hosted:
+            return True
+
+    return resolved
+
+
 def _get_image_mode(value: str | None) -> str:
     if not value:
         return "api"
@@ -243,7 +259,7 @@ def get_settings() -> Settings:
         gemini_api_key=os.getenv("GEMINI_API_KEY"),
         openai_api_key=os.getenv("OPENAI_API_KEY"),
         ai_provider=os.getenv("AI_PROVIDER", "openai").strip().lower(),
-        headless=_get_bool(os.getenv("HEADLESS"), _default_headless()),
+        headless=_resolve_headless(),
         slow_mo=int(os.getenv("SLOW_MO", "0")),
         user_data_dir=os.getenv("USER_DATA_DIR", ".playwright").strip(),
         screenshots_dir=os.getenv("SCREENSHOTS_DIR", "artifacts/screenshots").strip(),
