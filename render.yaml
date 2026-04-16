@@ -21,7 +21,7 @@ services:
     name: shortly-worker
     env: python
     rootDir: .
-    buildCommand: pip install --prefer-binary -r requirements.txt && playwright install chromium
+    buildCommand: pip install --prefer-binary -r requirements.txt && playwright install --with-deps chromium
     startCommand: python worker.py
     plan: starter
     envVars:
