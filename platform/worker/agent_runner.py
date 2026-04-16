@@ -1,19 +1,16 @@
 """
-Agent job runner — loads the orchestrator from the local repo and executes it.
+Agent job runner for Railway/worker execution.
 
-Import strategy:
-  1. Resolve the agent repo root (directory containing core/orchestrator.py).
-  2. Ensure repo root is first on sys.path.
-  3. Flush ALL cached core/config/utils modules from sys.modules.
-  4. Explicitly register the `utils` package pointing at <repo>/utils/ so that
-     `from utils.gemini_client import GeminiClient` works even in environments
-     (like Railway) where Python's default path search would fail.
-  5. Import core.orchestrator cleanly.
+This loader is defensive against import-path issues in hosted environments.
+It guarantees that utils.gemini_client resolves, even when the file is missing,
+by installing an OpenAI-backed compatibility shim.
 """
 
 import asyncio
 import importlib
 import importlib.util
+import json
+import os
 import sys
 import types
 from dataclasses import dataclass
@@ -72,64 +69,66 @@ class AgentJobRunner:
             raise RuntimeError(f"Agent repo path not found: {repo_root}")
 
         repo_root_str = str(repo_root.resolve())
-
-        # ── 1. Ensure repo root is FIRST on sys.path ───────────────────
-        # Remove any existing entries so we don't get stale duplicates,
-        # then insert at position 0 so our local packages win.
         sys.path = [p for p in sys.path if p != repo_root_str]
         sys.path.insert(0, repo_root_str)
 
-        # ── 2. Flush every cached module that could conflict ───────────
         for mod_name in list(sys.modules):
-            if (
-                mod_name in ("core", "config", "utils")
-                or mod_name.startswith(("core.", "config.", "utils."))
-            ):
+            if mod_name in ("core", "config", "utils") or mod_name.startswith(("core.", "config.", "utils.")):
                 sys.modules.pop(mod_name, None)
 
-        # ── 3. Explicitly register the utils package ───────────────────
-        # This is essential on Railway and similar platforms where Python's
-        # default import machinery can't discover our local utils/ dir.
         self._register_utils_package(repo_root)
 
-        # ── 4. Import the orchestrator ─────────────────────────────────
-        return importlib.import_module("core.orchestrator")
+        try:
+            return importlib.import_module("core.orchestrator")
+        except (ImportError, ModuleNotFoundError) as exc:
+            err = str(exc)
+            name = getattr(exc, "name", "")
+            if "utils.gemini_client" in err or "GeminiClient" in err or name in {"utils", "utils.gemini_client"}:
+                self._install_gemini_client_fallback()
+                if (
+                    "utils" in sys.modules
+                    and "utils.gemini_client" in sys.modules
+                    and hasattr(sys.modules["utils.gemini_client"], "GeminiClient")
+                ):
+                    sys.modules["utils"].GeminiClient = sys.modules["utils.gemini_client"].GeminiClient
+
+                for mod_name in list(sys.modules):
+                    if mod_name == "core" or mod_name.startswith("core."):
+                        sys.modules.pop(mod_name, None)
+
+                return importlib.import_module("core.orchestrator")
+            raise
 
     def _register_utils_package(self, repo_root: Path) -> None:
-        """Register the local utils/ directory as a proper Python package."""
         utils_dir = repo_root / "utils"
-        if not utils_dir.exists():
-            return
 
-        # Create and register the utils package module
         utils_pkg = types.ModuleType("utils")
-        utils_pkg.__path__ = [str(utils_dir.resolve())]
-        utils_pkg.__file__ = str((utils_dir / "__init__.py").resolve())
+        utils_pkg.__path__ = [str(utils_dir.resolve())] if utils_dir.exists() else []
+        if (utils_dir / "__init__.py").exists():
+            utils_pkg.__file__ = str((utils_dir / "__init__.py").resolve())
         sys.modules["utils"] = utils_pkg
 
-        # Pre-load utils.gemini_client so downstream imports find it
         gemini_path = utils_dir / "gemini_client.py"
         if gemini_path.exists():
             try:
-                spec = importlib.util.spec_from_file_location(
-                    "utils.gemini_client", str(gemini_path.resolve())
-                )
+                spec = importlib.util.spec_from_file_location("utils.gemini_client", str(gemini_path.resolve()))
                 if spec and spec.loader:
                     module = importlib.util.module_from_spec(spec)
                     spec.loader.exec_module(module)
                     sys.modules["utils.gemini_client"] = module
-                    if hasattr(module, "GeminiClient"):
-                        utils_pkg.GeminiClient = module.GeminiClient
             except Exception as exc:
                 print(f"[agent_runner] Warning: could not pre-load gemini_client: {exc}")
+                self._install_gemini_client_fallback()
+        else:
+            self._install_gemini_client_fallback()
 
-        # Pre-load utils.logger
+        if "utils.gemini_client" in sys.modules and hasattr(sys.modules["utils.gemini_client"], "GeminiClient"):
+            utils_pkg.GeminiClient = sys.modules["utils.gemini_client"].GeminiClient
+
         logger_path = utils_dir / "logger.py"
         if logger_path.exists():
             try:
-                spec = importlib.util.spec_from_file_location(
-                    "utils.logger", str(logger_path.resolve())
-                )
+                spec = importlib.util.spec_from_file_location("utils.logger", str(logger_path.resolve()))
                 if spec and spec.loader:
                     module = importlib.util.module_from_spec(spec)
                     spec.loader.exec_module(module)
@@ -137,19 +136,101 @@ class AgentJobRunner:
             except Exception as exc:
                 print(f"[agent_runner] Warning: could not pre-load logger: {exc}")
 
-        # Pre-load utils.image_utils
         image_utils_path = utils_dir / "image_utils.py"
         if image_utils_path.exists():
             try:
-                spec = importlib.util.spec_from_file_location(
-                    "utils.image_utils", str(image_utils_path.resolve())
-                )
+                spec = importlib.util.spec_from_file_location("utils.image_utils", str(image_utils_path.resolve()))
                 if spec and spec.loader:
                     module = importlib.util.module_from_spec(spec)
                     spec.loader.exec_module(module)
                     sys.modules["utils.image_utils"] = module
             except Exception as exc:
                 print(f"[agent_runner] Warning: could not pre-load image_utils: {exc}")
+
+    def _install_gemini_client_fallback(self) -> None:
+        if "utils.gemini_client" in sys.modules:
+            return
+
+        if "utils" not in sys.modules:
+            parent = types.ModuleType("utils")
+            parent.__path__ = []
+            sys.modules["utils"] = parent
+
+        try:
+            from openai import OpenAI
+        except Exception:
+            OpenAI = None  # type: ignore
+
+        module = types.ModuleType("utils.gemini_client")
+
+        class GeminiClient:  # pylint: disable=too-few-public-methods
+            def __init__(self, api_key: str | None = None, model: str | None = None):
+                env_key = os.getenv("OPENAI_API_KEY", "")
+                raw_key = env_key if env_key else (api_key or "")
+                self.api_key = (raw_key or "").strip().strip('"').strip("'")
+                self.model = (model or os.getenv("OPENAI_MODEL", "gpt-4o")).strip() or "gpt-4o"
+                self.client = OpenAI(api_key=self.api_key) if (self.api_key and OpenAI is not None) else None
+
+            @property
+            def available(self) -> bool:
+                return self.client is not None
+
+            def generate_text(
+                self,
+                contents,
+                *,
+                system_instruction: str = "",
+                temperature: float = 0.2,
+                max_output_tokens: int = 800,
+                response_mime_type: str | None = None,
+                response_schema=None,
+            ) -> str:
+                del response_schema
+                if not self.available:
+                    raise RuntimeError("OpenAI client is not available")
+
+                user_text = contents if isinstance(contents, str) else json.dumps(contents, ensure_ascii=False)
+                messages = []
+                if system_instruction:
+                    messages.append({"role": "system", "content": system_instruction})
+                messages.append({"role": "user", "content": user_text})
+
+                kwargs = {
+                    "model": self.model,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "max_tokens": max_output_tokens,
+                }
+                if response_mime_type == "application/json":
+                    kwargs["response_format"] = {"type": "json_object"}
+
+                response = self.client.chat.completions.create(**kwargs)
+                content = response.choices[0].message.content
+                if isinstance(content, str):
+                    return content.strip()
+                return str(content or "").strip()
+
+            def generate_json(
+                self,
+                contents,
+                *,
+                system_instruction: str = "",
+                temperature: float = 0.2,
+                max_output_tokens: int = 800,
+                schema=None,
+            ) -> str:
+                del schema
+                return self.generate_text(
+                    contents,
+                    system_instruction=system_instruction,
+                    temperature=temperature,
+                    max_output_tokens=max_output_tokens,
+                    response_mime_type="application/json",
+                )
+
+        module.GeminiClient = GeminiClient
+        sys.modules["utils.gemini_client"] = module
+        sys.modules["utils"].GeminiClient = module.GeminiClient
 
     def _resolve_agent_repo_root(self) -> Path:
         current_repo_root = Path(__file__).resolve().parents[2]
