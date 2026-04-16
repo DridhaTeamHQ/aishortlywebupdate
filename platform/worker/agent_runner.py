@@ -64,7 +64,7 @@ class AgentJobRunner:
 
         # Clear conflicting local modules so imports come from the real agent repo.
         for module_name in list(sys.modules):
-            if module_name == "core" or module_name.startswith(("core.", "config.", "utils.")):
+            if module_name in ("core", "config", "utils") or module_name.startswith(("core.", "config.", "utils.")):
                 sys.modules.pop(module_name, None)
 
         self._prepare_repo_utils_imports(repo_root)
