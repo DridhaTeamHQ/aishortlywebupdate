@@ -10,22 +10,24 @@ type EventRow = {
 };
 
 const EVENT_CONFIG: Record<string, { icon: string; label: string; color?: string }> = {
-    STEP_STARTED: { icon: '🔄', label: 'Started' },
-    STEP_DONE: { icon: '✅', label: 'Completed' },
-    LOG: { icon: '📋', label: 'Log' },
-    ERROR: { icon: '❌', label: 'Error', color: 'var(--danger)' },
-    STREAM_READY: { icon: '📡', label: 'Stream Ready' },
-    RUN_FINISHED: { icon: '🏁', label: 'Run Finished' },
+    STEP_STARTED: { icon: '[>]', label: 'Started' },
+    STEP_DONE: { icon: '[ok]', label: 'Completed' },
+    LOG: { icon: '[i]', label: 'Log' },
+    ERROR: { icon: '[x]', label: 'Error', color: 'var(--danger)' },
+    SCRAPE_STARTED: { icon: '[src]', label: 'Scraping started' },
+    SCRAPE_DONE: { icon: '[src]', label: 'Scraping finished' },
+    STREAM_READY: { icon: '[~]', label: 'Stream Ready' },
+    RUN_FINISHED: { icon: '[*]', label: 'Run Finished' },
 };
 
 const STEP_LABELS: Record<string, { icon: string; label: string }> = {
-    ingest: { icon: '🔍', label: 'Scraping news sources' },
-    resolve_events: { icon: '🔗', label: 'Resolving duplicate stories' },
-    breaking_classification: { icon: '🔥', label: 'Classifying breaking news' },
-    summarize: { icon: '📝', label: 'Summarizing article' },
-    telugu: { icon: '🇮🇳', label: 'Translating to Telugu' },
-    image: { icon: '🖼️', label: 'Finding best image' },
-    publish: { icon: '🚀', label: 'Publishing to CMS' },
+    ingest: { icon: '[src]', label: 'Scraping news sources' },
+    resolve_events: { icon: '[dedupe]', label: 'Resolving duplicate stories' },
+    breaking_classification: { icon: '[break]', label: 'Classifying breaking news' },
+    summarize: { icon: '[sum]', label: 'Summarizing article' },
+    telugu: { icon: '[tl]', label: 'Translating to Telugu' },
+    image: { icon: '[img]', label: 'Finding best image' },
+    publish: { icon: '[pub]', label: 'Publishing to CMS' },
 };
 
 function formatTime(iso: string): string {
@@ -37,9 +39,19 @@ function formatTime(iso: string): string {
     }
 }
 
+function truncateUrl(url: string): string {
+    try {
+        const u = new URL(url);
+        const path = u.pathname.length > 50 ? `${u.pathname.slice(0, 50)}...` : u.pathname;
+        return `${u.hostname}${path}`;
+    } catch {
+        return url.length > 60 ? `${url.slice(0, 60)}...` : url;
+    }
+}
+
 function buildMessage(event: EventRow): { icon: string; message: string; detail?: string; color?: string } {
     const { event_type, payload } = event;
-    const config = EVENT_CONFIG[event_type] || { icon: '📌', label: event_type };
+    const config = EVENT_CONFIG[event_type] || { icon: '[.]', label: event_type };
     const step = payload?.step || '';
     const stepInfo = STEP_LABELS[step];
 
@@ -59,10 +71,26 @@ function buildMessage(event: EventRow): { icon: string; message: string; detail?
         if (payload.breaking !== undefined) extras.push(`${payload.breaking} breaking`);
 
         return {
-            icon: ok ? '✅' : '⚠️',
-            message: `${stepInfo.label} — ${ok ? 'done' : 'failed'}`,
-            detail: extras.length ? extras.join(' · ') : (payload.url ? truncateUrl(payload.url) : undefined),
+            icon: ok ? '[ok]' : '[!]',
+            message: `${stepInfo.label} - ${ok ? 'done' : 'failed'}`,
+            detail: extras.length ? extras.join(' | ') : (payload.url ? truncateUrl(payload.url) : undefined),
             color: ok ? undefined : 'var(--warning)',
+        };
+    }
+
+    if (event_type === 'SCRAPE_STARTED') {
+        return {
+            icon: '[src]',
+            message: 'Scraping configured news sources',
+        };
+    }
+
+    if (event_type === 'SCRAPE_DONE') {
+        const total = Number(payload.total || 0);
+        return {
+            icon: '[src]',
+            message: `Scraping finished - ${total} articles found`,
+            color: total > 0 ? undefined : 'var(--warning)',
         };
     }
 
@@ -70,9 +98,9 @@ function buildMessage(event: EventRow): { icon: string; message: string; detail?
         const status = payload.status || 'unknown';
         const published = payload.published;
         return {
-            icon: status === 'succeeded' ? '🎉' : status === 'cancelled' ? '🛑' : '💥',
+            icon: status === 'succeeded' ? '[done]' : status === 'cancelled' ? '[stop]' : '[fail]',
             message: status === 'succeeded'
-                ? `Run complete${published !== undefined ? ` — ${published} articles published` : ''}`
+                ? `Run complete${published !== undefined ? ` - ${published} articles published` : ''}`
                 : status === 'cancelled'
                     ? 'Run cancelled'
                     : `Run failed${payload.error ? `: ${payload.error}` : ''}`,
@@ -82,7 +110,7 @@ function buildMessage(event: EventRow): { icon: string; message: string; detail?
 
     if (event_type === 'ERROR') {
         return {
-            icon: '❌',
+            icon: '[x]',
             message: payload.message || 'An error occurred',
             color: 'var(--danger)',
         };
@@ -91,19 +119,9 @@ function buildMessage(event: EventRow): { icon: string; message: string; detail?
     return {
         icon: config.icon,
         message: `${config.label}${step ? `: ${step}` : ''}`,
-        detail: payload.url ? truncateUrl(payload.url) : undefined,
+        detail: payload.message || (payload.url ? truncateUrl(payload.url) : undefined),
         color: config.color,
     };
-}
-
-function truncateUrl(url: string): string {
-    try {
-        const u = new URL(url);
-        const path = u.pathname.length > 50 ? u.pathname.slice(0, 50) + '…' : u.pathname;
-        return `${u.hostname}${path}`;
-    } catch {
-        return url.length > 60 ? url.slice(0, 60) + '…' : url;
-    }
 }
 
 export default function LiveLog({ events }: { events: EventRow[] }) {
@@ -120,9 +138,9 @@ export default function LiveLog({ events }: { events: EventRow[] }) {
     if (!events.length) {
         return (
             <div className="card">
-                <h3>📡 Live Activity</h3>
+                <h3>Live Activity</h3>
                 <div className="empty-state">
-                    <div className="empty-state-icon">🤖</div>
+                    <div className="empty-state-icon">[bot]</div>
                     <div className="empty-state-text">Start an agent to see live activity here</div>
                 </div>
             </div>
@@ -132,7 +150,7 @@ export default function LiveLog({ events }: { events: EventRow[] }) {
     return (
         <div className="card card-glow">
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-                <h3 style={{ margin: 0 }}>📡 Live Activity</h3>
+                <h3 style={{ margin: 0 }}>Live Activity</h3>
                 <span className="text-muted">{events.length} events</span>
             </div>
             <div className="live-log" ref={containerRef}>

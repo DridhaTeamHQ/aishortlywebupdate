@@ -167,8 +167,10 @@ class HardenedOrchestrator:
             if self._is_cancelled():
                 return
             if not await self._safe_login():
-                self.logger.critical("Login failed after retries")
-                return
+                message = "CMS login failed after retries"
+                self.logger.critical(message)
+                await self._emit_event("ERROR", {"message": message})
+                raise RuntimeError(message)
 
             if self.settings.scheduler_enabled:
                 while not self._is_cancelled():
@@ -189,6 +191,17 @@ class HardenedOrchestrator:
         metrics.record_category_counts(by_category)
         total_scraped = sum(len(rows) for rows in by_category.values())
         await self._emit_event("SCRAPE_DONE", {"total": total_scraped})
+        await self._emit_event(
+            "LOG",
+            {
+                "message": f"Scraped {total_scraped} articles across {sum(1 for rows in by_category.values() if rows)} categories",
+            },
+        )
+        if total_scraped <= 0:
+            message = "No articles scraped from configured sources"
+            self.logger.error(message)
+            await self._emit_event("ERROR", {"message": message})
+            raise RuntimeError(message)
         if self._is_cancelled():
             return
 
@@ -212,6 +225,17 @@ class HardenedOrchestrator:
             cluster_rows.append((cluster, decision))
 
         self.logger.info(f"metric.breaking_news_count count={metrics.breaking_news_count}")
+        await self._emit_event(
+            "LOG",
+            {
+                "message": f"Resolved {len(cluster_rows)} story clusters with {metrics.breaking_news_count} breaking candidates",
+            },
+        )
+        if not cluster_rows:
+            message = "No candidate stories available after deduplication"
+            self.logger.error(message)
+            await self._emit_event("ERROR", {"message": message})
+            raise RuntimeError(message)
 
         clusters_by_category: Dict[str, List[Tuple[object, object]]] = {}
         for cluster, decision in cluster_rows:
@@ -395,6 +419,17 @@ class HardenedOrchestrator:
             f"metric.image_quality pass={metrics.image_pass_count} fail={metrics.image_fail_count} reasons={dict(metrics.image_fail_reasons)}"
         )
         self.logger.info(f"run_complete published={published} total_candidates={len(cluster_rows)}")
+        await self._emit_event(
+            "LOG",
+            {
+                "message": f"Publishing complete: {published} published from {len(cluster_rows)} candidate stories",
+            },
+        )
+        if published <= 0:
+            message = "No articles were published"
+            self.logger.error(message)
+            await self._emit_event("ERROR", {"message": message})
+            raise RuntimeError(message)
         await self._emit_event("RUN_FINISHED", {"published": published, "candidates": len(cluster_rows)})
 
     def _pick_representative(self, articles: List[object]):
