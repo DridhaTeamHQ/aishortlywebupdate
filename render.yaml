@@ -6,6 +6,7 @@ services:
     rootDir: frontend
     buildCommand: npm install && npm run build
     startCommand: npm run start
+    healthCheckPath: /login
     plan: starter
     envVars:
       - key: NEXT_PUBLIC_SUPABASE_URL
@@ -34,8 +35,6 @@ services:
           type: web
           name: shortly-dashboard
           envVarKey: SUPABASE_SERVICE_ROLE_KEY
-      - key: GEMINI_API_KEY
-        sync: false
       - key: OPENAI_API_KEY
         sync: false
       - key: CMS_URL
@@ -44,5 +43,7 @@ services:
         sync: false
       - key: CMS_PASSWORD
         sync: false
-      - key: AI_PROVIDER
-        value: openai # or gemini
+      - key: WORKER_POLL_INTERVAL
+        value: "5"
+      - key: AI_AGENT_REPO_PATH
+        value: .

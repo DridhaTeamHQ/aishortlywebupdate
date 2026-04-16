@@ -1,0 +1,15 @@
+{
+  "name": "aishortlywebupdate-web",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "postinstall": "npm --prefix ../frontend install",
+    "dev": "npm --prefix ../frontend run dev",
+    "build": "npm --prefix ../frontend run build",
+    "start": "npm --prefix ../frontend run start",
+    "lint": "npm --prefix ../frontend run lint"
+  },
+  "engines": {
+    "node": "18.x || 20.x"
+  }
+}

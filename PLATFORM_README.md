@@ -1,33 +1,35 @@
 # Unified Agent Platform
 
-This repository now includes a deployable multi-service platform:
+This repository includes a deployable multi-service platform:
 
-- `frontend/`: Next.js dashboard (Supabase auth, start/stop, run timeline, stream iframe)
-- `backend/`: FastAPI control plane
-- `platform/worker/`: Redis RQ worker executing the orchestrator + cron scheduler
-- `platform/browser-stream/`: browser stream service placeholder
-- `platform/supabase/schema.sql`: Supabase schema + RLS + seed
+- `frontend/`: Next.js dashboard with Supabase auth and run controls
+- `backend/`: FastAPI control-plane scaffolding
+- `platform/worker/`: worker integration code
+- `platform/browser-stream/`: browser stream placeholder
+- `platform/supabase/schema.sql`: Supabase schema and seed data
 - `render.yaml`: Render Blueprint
 
-The worker is designed to run the real external agent repo:
-- `https://github.com/DridhaTeamHQ/ai-agent-browser.git`
-- During Render build, the worker clones that repo into `external/ai-agent-browser`
-- `worker_tasks.py` then loads `core.orchestrator` from that external repo and applies dashboard runtime controls
+## Worker Repo Path
 
-## Quick setup
+The worker runs the checked-in orchestrator code from this repository by default.
 
-1. Create a Supabase project.
-2. Run SQL in `platform/supabase/schema.sql`.
-3. Provision Render services using `render.yaml`.
-4. Configure env vars:
-   - Supabase keys/URL on API + worker + frontend
-   - `PLATFORM_ENCRYPTION_KEY` on API + worker (same value)
-   - CMS/OpenAI vars on worker
-   - `CONTROL_API_BASE_URL` on frontend
-   - `BROWSER_STREAM_BASE_URL` on API + worker
-   - `AI_AGENT_REPO_PATH` on worker if you want to override the default external repo checkout path
+- Default worker repo path: `.`
+- Optional override: `AI_AGENT_REPO_PATH`
+- Compatibility checkout: `external/ai-agent-browser` can still be used locally, but production no longer depends on that nested repo path
 
-## API contracts
+## Quick Setup
+
+1. Create a Supabase project
+2. Run SQL from `platform/supabase/schema.sql`
+3. Deploy with `render.yaml`, or use Vercel for the dashboard and Railway/Render for the worker
+4. Configure environment variables:
+   - Supabase URL and keys on frontend and worker
+   - CMS/OpenAI values on the worker
+   - `PLATFORM_ENCRYPTION_KEY` where encrypted user secrets are used
+   - `BROWSER_STREAM_BASE_URL` only if you enable browser streaming
+   - `AI_AGENT_REPO_PATH` only if you intentionally override the default repo root
+
+## API Contracts
 
 - `GET /api/agents`
 - `POST /api/agents/{agent_id}/runs`
@@ -39,6 +41,6 @@ The worker is designed to run the real external agent repo:
 
 ## Notes
 
-- Worker emits run events to `agent_run_events`.
-- Orchestrator now supports runtime cancel checks and structured step events.
-- Browser stream endpoint is scaffolded; connect it to your preferred remote browser provider for full live Chromium streaming.
+- Worker emits live events to `agent_run_events`
+- Orchestrator supports runtime cancel checks and structured step events
+- Browser streaming is scaffolded but optional

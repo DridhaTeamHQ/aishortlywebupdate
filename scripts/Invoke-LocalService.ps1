@@ -65,7 +65,7 @@ if (-not $env:RQ_QUEUE_NAME) {
 }
 
 if (-not $env:AI_AGENT_REPO_PATH) {
-  $defaultRepo = Join-Path $root 'external\ai-agent-browser'
+  $defaultRepo = $root
   if (Test-Path -LiteralPath $defaultRepo) {
     $env:AI_AGENT_REPO_PATH = $defaultRepo
   }

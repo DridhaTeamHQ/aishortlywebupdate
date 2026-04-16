@@ -1,115 +1,51 @@
-# Unified AI Agent Platform
+# Shortly AI
 
-A fully decoupled, scalable agent platform. The frontend operates on Vercel while a robust Python long-running worker executes browser-based tasks on Railway. They communicate exclusively via Supabase Queues and Realtime.
+Shortly AI is a split production platform built around Supabase-backed agent runs.
 
-## 🚀 Deployment Guide
+- `frontend/`: Next.js dashboard for auth, run controls, and live status
+- repo root: Python Playwright worker that claims queued runs and executes the agent
+- `platform/`: supporting deployment, schema, and worker integration files
 
-This repository is pre-configured to deploy effortlessly across Vercel and Railway with **zero code changes required**. 
+## Production Targets
 
-Please see **[DEPLOYMENT.md](DEPLOYMENT.md)** for exact, step-by-step instructions on setting up Vercel (Frontend), Railway (Backend Worker), and Supabase (Database + Queue).
+This repository is configured to support:
 
-## Setup Local Environment
+- Vercel for the dashboard
+- Render for the dashboard and worker via [render.yaml](C:\Users\Tamada\Desktop\Shortly AI Agent\render.yaml)
+- Railway for the worker via [railway.json](C:\Users\Tamada\Desktop\Shortly AI Agent\railway.json)
 
-### 1. Install Dependencies
+Deployment details live in [DEPLOYMENT.md](C:\Users\Tamada\Desktop\Shortly AI Agent\DEPLOYMENT.md).
+
+## Local Development
+
+Install Python and frontend dependencies:
 
 ```bash
-# Install Backend worker dependencies
 pip install -r requirements.txt
 python -m playwright install chromium
-
-# Install Frontend dependencies
 npm install
 npm --prefix frontend install
 ```
 
-### 2. Environment Variables
-Copy `env.example` to `.env` and fill out the required variables for your setup. The file is cleanly split into Frontend and Backend variables.
+Copy [env.example](C:\Users\Tamada\Desktop\Shortly AI Agent\env.example) to `.env` and fill in your values.
 
-### 3. Run Locally
+Run the worker:
 
-Open two terminal tabs:
-
-**Terminal 1 (Backend Worker)**
 ```bash
 python worker.py
 ```
 
-**Terminal 2 (Frontend Dashboard)**
+Run the dashboard:
+
 ```bash
 npm run dev
 ```
 
-## Architecture
+## Deployment Notes
 
-**Key Principle**: The Browser Agent is the ONLY decision maker. No external schedulers, databases, or API servers.
+- Recommended Vercel project roots: repository root or `frontend`
+- Compatibility Vercel root: `web`
+- Production worker default repo path: `.`
+- Optional legacy worker override: `AI_AGENT_REPO_PATH=external/ai-agent-browser`
 
-### Components
-
-- **main.py**: Controller loop (tries up to 5 articles until one is published)
-- **agent/browser_agent.py**: Playwright browser management
-- **agent/scraper.py**: News article scraping from BBC/Al Jazeera/NBC
-- **agent/summarizer.py**: English summarization (300-360 chars)
-- **agent/telugu_writer.py**: Telugu translation with fallbacks
-- **agent/category_decider.py**: Simple keyword-based category selection
-- **agent/cms_publisher.py**: CMS login, form filling, and publishing
-
-## Features
-
-- **No Database**: All in-memory, no persistence
-- **No Scheduler**: Single run, publishes one article
-- **No Hard Blockers**: Quality checks warn but never block
-- **Visible Browser**: See exactly what's happening
-- **Automatic Fallbacks**: Telugu failures → English, publish failures → try next article
-
-## Category Rules
-
-- **Spiritual**: temple, god, puja, astrology
-- **Sports**: cricket, match, player, ipl
-- **Entertainment**: actor, film, cinema, movie
-- **Health**: health, diet, disease, medical
-- **International**: Only if clearly foreign (USA, China, etc.)
-- **National**: Default for everything else
-
-## Telugu Style
-
-Matches TV9/Eenadu/Sakshi digital news style:
-- Natural Telugu (not literal translation)
-- Newsroom vocabulary
-- Short, punchy sentences
-- 300-360 characters for summary
-
-## Troubleshooting
-
-### "OPENAI_API_KEY not found"
-- Make sure you created `.env` file (not `env.example`)
-- Check that `OPENAI_API_KEY=sk-...` is in `.env`
-
-### "CMS credentials not found"
-- Make sure `CMS_URL`, `CMS_EMAIL`, and `CMS_PASSWORD` are in `.env`
-
-### Browser doesn't open
-- Make sure Playwright is installed: `playwright install chromium`
-- Check that `HEADLESS=false` in `.env`
-
-### "No articles found"
-- Check internet connection
-- News sources (BBC/Al Jazeera/NBC) might be blocked in your region
-- Try running again (different articles may be available)
-
-### CMS login fails
-- Verify CMS credentials in `.env`
-- Check that `CMS_ROLE` matches exactly (case-sensitive)
-- Make sure CMS URL is correct
-
-### Article scraping fails
-- Network issues
-- News source website structure changed
-- Try running again (will try different sources)
-
-## Logs
-
-Check `artifacts/logs/automation.log` for detailed logs of what happened.
-
-## Screenshots
-
-Screenshots are saved to `artifacts/screenshots/` if errors occur.
+The `web/` folder is a compatibility wrapper for older Vercel projects that were previously configured with `web` as the root directory. The real Next.js application still lives in `frontend/`.
