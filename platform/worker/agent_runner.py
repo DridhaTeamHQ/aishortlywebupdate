@@ -114,9 +114,10 @@ class AgentJobRunner:
                 spec = importlib.util.spec_from_file_location("utils.gemini_client", str(gemini_path.resolve()))
                 if spec and spec.loader:
                     module = importlib.util.module_from_spec(spec)
-                    spec.loader.exec_module(module)
                     sys.modules["utils.gemini_client"] = module
+                    spec.loader.exec_module(module)
             except Exception as exc:
+                sys.modules.pop("utils.gemini_client", None)
                 print(f"[agent_runner] Warning: could not pre-load gemini_client: {exc}")
                 self._install_gemini_client_fallback()
         else:
@@ -131,9 +132,10 @@ class AgentJobRunner:
                 spec = importlib.util.spec_from_file_location("utils.logger", str(logger_path.resolve()))
                 if spec and spec.loader:
                     module = importlib.util.module_from_spec(spec)
-                    spec.loader.exec_module(module)
                     sys.modules["utils.logger"] = module
+                    spec.loader.exec_module(module)
             except Exception as exc:
+                sys.modules.pop("utils.logger", None)
                 print(f"[agent_runner] Warning: could not pre-load logger: {exc}")
 
         image_utils_path = utils_dir / "image_utils.py"
@@ -142,14 +144,17 @@ class AgentJobRunner:
                 spec = importlib.util.spec_from_file_location("utils.image_utils", str(image_utils_path.resolve()))
                 if spec and spec.loader:
                     module = importlib.util.module_from_spec(spec)
-                    spec.loader.exec_module(module)
                     sys.modules["utils.image_utils"] = module
+                    spec.loader.exec_module(module)
             except Exception as exc:
+                sys.modules.pop("utils.image_utils", None)
                 print(f"[agent_runner] Warning: could not pre-load image_utils: {exc}")
 
     def _install_gemini_client_fallback(self) -> None:
-        if "utils.gemini_client" in sys.modules:
+        existing = sys.modules.get("utils.gemini_client")
+        if existing is not None and hasattr(existing, "GeminiClient"):
             return
+        sys.modules.pop("utils.gemini_client", None)
 
         if "utils" not in sys.modules:
             parent = types.ModuleType("utils")
