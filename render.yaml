@@ -43,6 +43,10 @@ services:
         sync: false
       - key: CMS_PASSWORD
         sync: false
+      - key: CMS_ROLE
+        value: State Sub Editor
+      - key: IMAGE_MODE
+        value: browser
       - key: WORKER_POLL_INTERVAL
         value: "5"
       - key: AI_AGENT_REPO_PATH
