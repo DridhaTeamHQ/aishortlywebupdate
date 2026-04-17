@@ -953,8 +953,11 @@ class ImageQualityPipeline:
         return max(0.0, min(1.0, score))
 
     def _store_image(self, data: bytes, title: str) -> str:
+        import time as _time
         safe = re.sub(r"[^a-zA-Z0-9\s-]", "", title)[:40].strip().replace(" ", "_") or "image"
-        path = self.download_dir / f"{safe}.jpg"
+        ts_ms = int(_time.time() * 1000)
+        img_hash = hashlib.sha1(data[:4096]).hexdigest()[:8]
+        path = self.download_dir / f"{safe}_{ts_ms}_{img_hash}.jpg"
         path.write_bytes(data)
         return str(path.resolve())
 

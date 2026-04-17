@@ -1,33 +1,120 @@
-﻿"""
-Memory Module - Simple SQLite blacklist to prevent duplicate processing.
+"""
+Memory Module - SQLite blacklist + Supabase cloud dedup.
 
 Tracks:
-- Processed URLs (success)
-- Failed URLs (with reason)
+- Processed URLs (success / failed / blacklisted) in local SQLite
+- Published article URLs and story keys in Supabase `published_articles`
+  table so dedup survives worker restarts and cross-deploy scenarios.
 """
 
+import os
 import sqlite3
 import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
 from utils.logger import get_logger
 
 
+def _make_supabase_client():
+    """Return a Supabase client if credentials are available, else None."""
+    try:
+        url = (os.getenv("SUPABASE_URL") or "").strip()
+        key = (os.getenv("SUPABASE_SERVICE_ROLE_KEY") or "").strip()
+        if not url or not key:
+            return None
+        from supabase import create_client  # type: ignore
+        return create_client(url, key)
+    except Exception:
+        return None
+
+
 class AgentMemory:
     """
     Persistent memory for the agent.
 
-    Database: core/memory/agent.db
-    Table: article_history
+    Database: core/memory/agent.db (local SQLite – fast in-run guard)
+    Remote:   Supabase published_articles table (cross-run / cross-deploy guard)
     """
 
     DB_PATH = Path(__file__).resolve().parent / "agent.db"
+    _SUPABASE_TABLE = "published_articles"
 
     def __init__(self):
         self.logger = get_logger("memory")
         self.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
+        self._sb = _make_supabase_client()
+        if self._sb:
+            self.logger.info("Supabase cloud dedup enabled")
+        else:
+            self.logger.warning("Supabase cloud dedup unavailable – relying on local SQLite only")
+
+    # ── Supabase cloud dedup ────────────────────────────────────────────────
+
+    def is_published_in_supabase(self, url: str) -> bool:
+        """Return True if this URL was already published (cloud check)."""
+        if not self._sb:
+            return False
+        normalized = self._normalize_url(url)
+        if not normalized:
+            return False
+        try:
+            result = (
+                self._sb.table(self._SUPABASE_TABLE)
+                .select("id")
+                .eq("url", normalized)
+                .limit(1)
+                .execute()
+            )
+            return bool((result.data or []))
+        except Exception as exc:
+            self.logger.warning(f"Supabase dedup check failed (url): {exc}")
+            return False
+
+    def is_story_published_in_supabase(self, story_key: str, within_hours: int = 48) -> bool:
+        """Return True if this story key was published recently (cloud check)."""
+        if not self._sb or not (story_key or "").strip():
+            return False
+        try:
+            from datetime import timedelta
+            cutoff = (datetime.now(timezone.utc) - timedelta(hours=within_hours)).isoformat()
+            result = (
+                self._sb.table(self._SUPABASE_TABLE)
+                .select("id")
+                .eq("story_key", story_key.strip())
+                .gte("published_at", cutoff)
+                .limit(1)
+                .execute()
+            )
+            return bool((result.data or []))
+        except Exception as exc:
+            self.logger.warning(f"Supabase dedup check failed (story_key): {exc}")
+            return False
+
+    def mark_published_in_supabase(self, url: str, title: str = "", story_key: str = "") -> None:
+        """Record a successful publish to Supabase so future runs skip it."""
+        if not self._sb:
+            return
+        normalized = self._normalize_url(url)
+        if not normalized:
+            return
+        try:
+            self._sb.table(self._SUPABASE_TABLE).upsert(
+                {
+                    "url": normalized,
+                    "title": (title or "").strip()[:512],
+                    "story_key": (story_key or "").strip()[:64],
+                    "published_at": datetime.now(timezone.utc).isoformat(),
+                },
+                on_conflict="url",
+            ).execute()
+            self.logger.info(f"Supabase dedup recorded: {normalized[:60]}")
+        except Exception as exc:
+            self.logger.warning(f"Supabase dedup write failed: {exc}")
+
+    # ── Local SQLite ────────────────────────────────────────────────────────
 
     def _get_conn(self):
         return sqlite3.connect(self.DB_PATH)
@@ -95,19 +182,23 @@ class AgentMemory:
             return False
 
     def is_success(self, url: str) -> bool:
-        """Check if URL was successfully published."""
+        """Check if URL was successfully published (local + Supabase)."""
         normalized = self._normalize_url(url)
         if not normalized:
             return False
+        # Fast local check first
         try:
             with self._get_conn() as conn:
                 cursor = conn.execute(
                     "SELECT 1 FROM article_history WHERE url = ? AND status = 'success'",
                     (normalized,),
                 )
-                return cursor.fetchone() is not None
+                if cursor.fetchone() is not None:
+                    return True
         except Exception:
-            return False
+            pass
+        # Cloud check for cross-run dedup
+        return self.is_published_in_supabase(url)
 
     def is_recent_failure(self, url: str, within_minutes: int = 360) -> bool:
         """True if URL failed recently; used to avoid retry loops across runs."""
@@ -131,7 +222,7 @@ class AgentMemory:
             return False
 
     def mark_success(self, url: str):
-        """Mark URL as successfully processed."""
+        """Mark URL as successfully processed (locally)."""
         self._record(url, "success")
 
     def is_story_success(self, story_key: str, within_hours: int = 48) -> bool:
@@ -139,6 +230,7 @@ class AgentMemory:
         key = (story_key or "").strip()
         if not key:
             return False
+        # Local check
         try:
             with self._get_conn() as conn:
                 cursor = conn.execute(
@@ -151,9 +243,12 @@ class AgentMemory:
                     """,
                     (key, f"-{int(within_hours)} hours"),
                 )
-                return cursor.fetchone() is not None
+                if cursor.fetchone() is not None:
+                    return True
         except Exception:
-            return False
+            pass
+        # Cloud check
+        return self.is_story_published_in_supabase(key, within_hours=within_hours)
 
     def mark_story_success(self, story_key: str, url: str = "", title: str = ""):
         """Mark a story fingerprint as successfully published."""

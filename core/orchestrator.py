@@ -380,6 +380,12 @@ class HardenedOrchestrator:
                                 article_url,
                                 getattr(cluster, "canonical_title", ""),
                             )
+                        # Persist to Supabase so future runs on any worker skip this article
+                        self.memory.mark_published_in_supabase(
+                            article_url,
+                            title=getattr(cluster, "canonical_title", ""),
+                            story_key=cluster_story_key or "",
+                        )
                         published_from_cluster = True
                         break
 

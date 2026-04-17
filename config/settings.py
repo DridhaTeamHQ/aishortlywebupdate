@@ -271,7 +271,7 @@ def get_settings() -> Settings:
         max_article_age_minutes=int(
             os.getenv(
                 "MAX_ARTICLE_AGE_MINUTES",
-                str(int(os.getenv("MAX_ARTICLE_AGE_HOURS", "0")) * 60) if os.getenv("MAX_ARTICLE_AGE_HOURS") else "1440",
+                str(int(os.getenv("MAX_ARTICLE_AGE_HOURS", "0")) * 60) if os.getenv("MAX_ARTICLE_AGE_HOURS") else "120",
             )
         ),
         require_published_time=_get_bool(os.getenv("REQUIRE_PUBLISHED_TIME"), True),
@@ -291,7 +291,7 @@ def get_settings() -> Settings:
 
         resolver_title_similarity=float(os.getenv("RESOLVER_TITLE_SIMILARITY", "0.78")),
         resolver_content_similarity=float(os.getenv("RESOLVER_CONTENT_SIMILARITY", "0.45")),
-        resolver_time_window_minutes=int(os.getenv("RESOLVER_TIME_WINDOW_MINUTES", "180")),
+        resolver_time_window_minutes=int(os.getenv("RESOLVER_TIME_WINDOW_MINUTES", "120")),
 
         image_quality_thresholds=_parse_json_env("IMAGE_QUALITY_THRESHOLDS", DEFAULT_IMAGE_THRESHOLDS),
     )
