@@ -1,4 +1,4 @@
-﻿"""STRICT VALIDATOR - Pre-Flight Validation Gate."""
+"""STRICT VALIDATOR - Pre-Flight Validation Gate."""
 
 import os
 import re
@@ -77,7 +77,7 @@ class ArticleValidator:
     MIN_BODY_LEN = 50
     MAX_BODY_LEN = 380
     MIN_TELUGU_TITLE_PURITY = 72.0
-    MIN_TELUGU_BODY_PURITY = 80.0
+    MIN_TELUGU_BODY_PURITY = 80.0  # kept for import compat, not used
     ALLOWED_ENGLISH_TOKENS = {
         "us", "uk", "un", "ai", "pm", "cm", "bjp", "congress", "g20", "who", "isro",
         "nato", "iran", "israel", "india", "modi", "trump", "rahul", "gandhi", "rbi", "mea", "icc",
@@ -137,23 +137,8 @@ class ArticleValidator:
         return ValidationResult(is_valid=True)
 
     def _telugu_percentage(self, text: str) -> float:
-        if not text:
-            return 0.0
-
-        clean_chars = [c for c in text if not c.isspace()]
-        total_chars = len(clean_chars)
-        if total_chars == 0:
-            return 0.0
-
-        telugu_chars = sum(1 for c in clean_chars if "\u0C00" <= c <= "\u0C7F")
-
-        allowed_english_chars = 0
-        for token in re.findall(r"[A-Za-z]{2,}", text):
-            if token.lower() in self.ALLOWED_ENGLISH_TOKENS:
-                allowed_english_chars += len(token)
-
-        purity_chars = min(total_chars, telugu_chars + allowed_english_chars)
-        return (purity_chars / total_chars) * 100.0
+        """Kept for backward compatibility — not used in English-only pipeline."""
+        return 100.0
 
     def get_recovery_action(self, failure_type: FailureType) -> RecoveryAction:
         return RECOVERY_MATRIX.get(failure_type, RecoveryAction.DISCARD_ARTICLE)

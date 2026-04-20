@@ -159,3 +159,29 @@ on conflict do nothing;
 insert into agents (org_id, slug, display_name, enabled, health_status)
 values ('00000000-0000-0000-0000-000000000001', 'shortly-ai-news', 'Shortly AI News Agent', true, 'healthy')
 on conflict (org_id, slug) do nothing;
+
+-- ══════════════════════════════════════════════════
+-- PUBLISHED ARTICLES (cross-run / cross-deployment dedup)
+-- ══════════════════════════════════════════════════
+create table if not exists public.published_articles (
+    id           bigserial primary key,
+    url          text not null unique,
+    title        text,
+    story_key    text,
+    image_url    text,
+    published_at timestamptz not null default now()
+);
+
+create index if not exists idx_pub_articles_url
+    on public.published_articles (url);
+
+create index if not exists idx_pub_articles_story_key
+    on public.published_articles (story_key)
+    where story_key is not null;
+
+create index if not exists idx_pub_articles_image_url
+    on public.published_articles (image_url)
+    where image_url is not null;
+
+-- Worker-only table — accessed server-side via service role key only.
+alter table public.published_articles disable row level security;

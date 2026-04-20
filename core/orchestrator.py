@@ -385,6 +385,7 @@ class HardenedOrchestrator:
                             article_url,
                             title=getattr(cluster, "canonical_title", ""),
                             story_key=cluster_story_key or "",
+                            image_url=str(getattr(article, "og_image", "") or getattr(article, "main_image", "") or "").strip(),
                         )
                         published_from_cluster = True
                         break
@@ -814,6 +815,14 @@ class HardenedOrchestrator:
                 f"url={article.url} reasons={image_result.rejection_reasons}"
             )
             return False, "image_missing"
+
+        # Image dedup: skip if this exact image URL was already published in a previous run.
+        _image_source_url = str(getattr(image_result, "source_url", "") or "").strip()
+        if not _image_source_url:
+            _image_source_url = str(getattr(article, "og_image", "") or getattr(article, "main_image", "") or "").strip()
+        if _image_source_url and self.memory.is_image_used_in_supabase(_image_source_url):
+            self.logger.info(f"skip.duplicate_image image_url={_image_source_url[:80]} url={article.url}")
+            return False, "duplicate_image"
 
         hashtag = self._build_hashtags(category=category, title=summary["title"], is_breaking=is_breaking)
         self.logger.info(f"publish.meta category={category} hashtag={hashtag}")

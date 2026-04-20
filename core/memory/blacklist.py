@@ -49,7 +49,11 @@ class AgentMemory:
         if self._sb:
             self.logger.info("Supabase cloud dedup enabled")
         else:
-            self.logger.warning("Supabase cloud dedup unavailable – relying on local SQLite only")
+            self.logger.error(
+                "Supabase cloud dedup UNAVAILABLE — articles will repeat across restarts. "
+                "Check SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY and ensure the "
+                "'published_articles' table exists."
+            )
 
     # ── Supabase cloud dedup ────────────────────────────────────────────────
 
@@ -93,7 +97,7 @@ class AgentMemory:
             self.logger.warning(f"Supabase dedup check failed (story_key): {exc}")
             return False
 
-    def mark_published_in_supabase(self, url: str, title: str = "", story_key: str = "") -> None:
+    def mark_published_in_supabase(self, url: str, title: str = "", story_key: str = "", image_url: str = "") -> None:
         """Record a successful publish to Supabase so future runs skip it."""
         if not self._sb:
             return
@@ -106,6 +110,7 @@ class AgentMemory:
                     "url": normalized,
                     "title": (title or "").strip()[:512],
                     "story_key": (story_key or "").strip()[:64],
+                    "image_url": (image_url or "").strip()[:1024],
                     "published_at": datetime.now(timezone.utc).isoformat(),
                 },
                 on_conflict="url",
@@ -113,6 +118,24 @@ class AgentMemory:
             self.logger.info(f"Supabase dedup recorded: {normalized[:60]}")
         except Exception as exc:
             self.logger.warning(f"Supabase dedup write failed: {exc}")
+
+    def is_image_used_in_supabase(self, image_url: str) -> bool:
+        """Return True if this image URL was already used in a published article."""
+        if not self._sb or not (image_url or "").strip():
+            return False
+        normalized = (image_url or "").strip()
+        try:
+            result = (
+                self._sb.table(self._SUPABASE_TABLE)
+                .select("id")
+                .eq("image_url", normalized)
+                .limit(1)
+                .execute()
+            )
+            return bool((result.data or []))
+        except Exception as exc:
+            self.logger.warning(f"Supabase image dedup check failed: {exc}")
+            return False
 
     # ── Local SQLite ────────────────────────────────────────────────────────
 
