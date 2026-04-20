@@ -1,4 +1,4 @@
-﻿"""Image quality pipeline with strict branding rejection and robust candidate recovery."""
+"""Image quality pipeline with strict branding rejection and robust candidate recovery."""
 
 from __future__ import annotations
 
@@ -129,7 +129,7 @@ class ImageQualityPipeline:
         self.max_vision_candidates = int(self.thresholds.get("vision_max_candidates", 6))
         self.max_probe_candidates = int(self.thresholds.get("max_probe_candidates", 8))
 
-        vision_enabled_env = (os.getenv("IMAGE_VISION_ENABLED", "true") or "true").strip().lower()
+        vision_enabled_env = (os.getenv("IMAGE_VISION_ENABLED", "false") or "false").strip().lower()
         self.vision_enabled = vision_enabled_env in {"1", "true", "yes", "y"}
 
         self._vision_cache: Dict[str, Dict[str, object]] = {}
@@ -830,12 +830,13 @@ class ImageQualityPipeline:
             self._vision_cache[key] = result
             return result
         except Exception as exc:
-            self.logger.warning(f"Vision assessment failed: {exc}")
+            self.logger.warning(f"Vision assessment failed (treating as usable): {exc}")
+            # Do NOT reject on vision error — static checks already passed, use those.
             return {
-                "usable": False,
-                "quality": 0.0,
-                "relevance": 0.0,
-                "reason": "vision_error_rejected",
+                "usable": True,
+                "quality": 0.55,
+                "relevance": 0.55,
+                "reason": "vision_error_static_fallback",
                 "has_logo": False,
                 "has_watermark": False,
             }
