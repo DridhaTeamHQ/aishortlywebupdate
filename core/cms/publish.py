@@ -1,4 +1,4 @@
-﻿"""CMS publisher with state-aware navigation and resilient selectors."""
+"""CMS publisher with state-aware navigation and resilient selectors."""
 
 import asyncio
 import os
@@ -911,8 +911,8 @@ class CMSPublisher:
 
             await self._scroll_form_to_section("Keywords")
             if not await self._fill_keywords(data.hashtag):
-                self.logger.error("Keywords fill failed")
-                return False
+                self.logger.warning("Keywords fill failed — continuing without keywords")
+                # Keywords are optional metadata; a fill failure must NOT abort the publish
 
             image_path = data.image_path if data.image_path and os.path.exists(data.image_path) else None
             if not image_path and data.image_url:
@@ -1151,8 +1151,8 @@ class CMSPublisher:
         if self.page is None:
             return False
 
-        for _ in range(24):
-            await asyncio.sleep(1)
+        for _ in range(16):
+            await asyncio.sleep(0.7)
             try:
                 if await self._is_articles_page() and not await self._is_article_form_open():
                     return True
@@ -1191,6 +1191,8 @@ class CMSPublisher:
             await btn.click(force=True)
 
             if await self._wait_publish_success():
+                # Let CMS React state fully settle before the next article opens the modal
+                await asyncio.sleep(1.5)
                 return True
 
             await self._dump_debug("publish_no_success_signal")

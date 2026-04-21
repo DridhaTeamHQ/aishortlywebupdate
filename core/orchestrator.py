@@ -405,9 +405,11 @@ class HardenedOrchestrator:
 
                     if consecutive_publish_failures >= self.max_consecutive_publish_failures:
                         self.logger.error(
-                            f"Stopping run after {consecutive_publish_failures} consecutive publish failures to avoid a retry loop"
+                            f"Too many consecutive publish failures ({consecutive_publish_failures}) in "
+                            f"category={category} — skipping to next category"
                         )
-                        stop_run = True
+                        # Break only this category's while-loop; do NOT abort other categories
+                        consecutive_publish_failures = 0
                         break
 
                 if stop_run:
@@ -892,7 +894,9 @@ class HardenedOrchestrator:
             if not await self._recover_browser_session():
                 return False
             await asyncio.sleep(2)
-            return False
+            # Retry fill_form after browser recovery instead of silently dropping the article
+            if not await self.publisher.fill_form(data):
+                return False
 
         for _attempt in range(self.max_publish_retries):
             # Check for cancellation before crucial step
