@@ -73,37 +73,52 @@ DEFAULT_CATEGORY_SOURCES: Dict[str, List[Dict[str, str]]] = {
         {"name": "Reuters", "scraper": "reuters", "url": "https://www.reuters.com/business/"},
         {"name": "TOI", "scraper": "toi", "url": "https://timesofindia.indiatimes.com/business"},
         {"name": "India Today", "scraper": "indiatoday", "url": "https://www.indiatoday.in/business"},
+        {"name": "NDTV", "scraper": "ndtv", "url": "https://www.ndtv.com/business"},
+        {"name": "Mint", "scraper": "thehindu", "url": "https://www.livemint.com/market"},
+        {"name": "ET", "scraper": "thehindu", "url": "https://economictimes.indiatimes.com/markets"},
     ],
     "tech": [
         {"name": "Reuters", "scraper": "reuters", "url": "https://www.reuters.com/technology/"},
         {"name": "TOI", "scraper": "toi", "url": "https://timesofindia.indiatimes.com/technology"},
         {"name": "India Today", "scraper": "indiatoday", "url": "https://www.indiatoday.in/technology"},
+        {"name": "NDTV", "scraper": "ndtv", "url": "https://www.ndtv.com/tech"},
+        {"name": "ET Tech", "scraper": "thehindu", "url": "https://economictimes.indiatimes.com/tech"},
     ],
     "international": [
         {"name": "Reuters", "scraper": "reuters", "url": "https://www.reuters.com/world/"},
         {"name": "TOI", "scraper": "toi", "url": "https://timesofindia.indiatimes.com/world"},
         {"name": "India Today", "scraper": "indiatoday", "url": "https://www.indiatoday.in/world"},
         {"name": "AlJazeera", "scraper": "aljazeera", "url": "https://www.aljazeera.com/news"},
+        {"name": "BBC", "scraper": "thehindu", "url": "https://www.bbc.com/news/world"},
+        {"name": "WION", "scraper": "ndtv", "url": "https://www.wionews.com/world"},
     ],
     "national": [
         {"name": "The Hindu", "scraper": "thehindu", "url": "https://www.thehindu.com/news/national/"},
         {"name": "TOI", "scraper": "toi", "url": "https://timesofindia.indiatimes.com/india"},
         {"name": "India Today", "scraper": "indiatoday", "url": "https://www.indiatoday.in/india"},
+        {"name": "NDTV", "scraper": "ndtv", "url": "https://www.ndtv.com/india"},
+        {"name": "Hindustan Times", "scraper": "thehindu", "url": "https://www.hindustantimes.com/india-news"},
     ],
     "environment": [
         {"name": "Reuters", "scraper": "reuters", "url": "https://www.reuters.com/business/environment/"},
         {"name": "India Today", "scraper": "indiatoday", "url": "https://www.indiatoday.in/environment"},
         {"name": "TOI", "scraper": "toi", "url": "https://timesofindia.indiatimes.com/india"},
         {"name": "AlJazeera", "scraper": "aljazeera", "url": "https://www.aljazeera.com/climate-crisis"},
+        {"name": "The Hindu", "scraper": "thehindu", "url": "https://www.thehindu.com/sci-tech/energy-and-environment/"},
     ],
     "crime": [
         {"name": "The Hindu", "scraper": "thehindu", "url": "https://www.thehindu.com/news/national/"},
         {"name": "TOI", "scraper": "toi", "url": "https://timesofindia.indiatimes.com/india"},
-        {"name": "India Today", "scraper": "indiatoday", "url": "https://www.indiatoday.in/india"},
+        {"name": "India Today", "scraper": "indiatoday", "url": "https://www.indiatoday.in/crime"},
+        {"name": "NDTV", "scraper": "ndtv", "url": "https://www.ndtv.com/india"},
+        {"name": "Hindustan Times", "scraper": "thehindu", "url": "https://www.hindustantimes.com/india-news"},
     ],
     "sports": [
         {"name": "TOI", "scraper": "toi", "url": "https://timesofindia.indiatimes.com/sports"},
         {"name": "The Hindu", "scraper": "thehindu", "url": "https://www.thehindu.com/sport/"},
+        {"name": "India Today", "scraper": "indiatoday", "url": "https://www.indiatoday.in/sports"},
+        {"name": "NDTV Sports", "scraper": "ndtv", "url": "https://sports.ndtv.com"},
+        {"name": "ESPN", "scraper": "thehindu", "url": "https://www.espncricinfo.com/ci/content/story/index.html"},
     ],
 }
 
@@ -267,11 +282,11 @@ def get_settings() -> Settings:
         image_mode=_get_image_mode(os.getenv("IMAGE_MODE")),
 
         max_articles=int(os.getenv("MAX_ARTICLES", "5")),
-        max_links_per_source=int(os.getenv("MAX_LINKS_PER_SOURCE", "8")),
+        max_links_per_source=int(os.getenv("MAX_LINKS_PER_SOURCE", "15")),
         max_article_age_minutes=int(
             os.getenv(
                 "MAX_ARTICLE_AGE_MINUTES",
-                str(int(os.getenv("MAX_ARTICLE_AGE_HOURS", "0")) * 60) if os.getenv("MAX_ARTICLE_AGE_HOURS") else "120",
+                str(int(os.getenv("MAX_ARTICLE_AGE_HOURS", "0")) * 60) if os.getenv("MAX_ARTICLE_AGE_HOURS") else "1440",
             )
         ),
         require_published_time=_get_bool(os.getenv("REQUIRE_PUBLISHED_TIME"), True),

@@ -1597,7 +1597,28 @@ Headline style patterns (factual, high-click, non-clickbait):
         max_body = 360
 
         article_title = " ".join((title or "").split())
-        article_body = " ".join((body or "").split())[:5200]
+        article_body_raw = " ".join((body or "").split())
+        # ── Strip common Indian news site boilerplate before summarization ──────────
+        # These patterns appear at the end of scraped bodies and pollute the AI output
+        _BOILERPLATE_PATTERNS = [
+            r"\s*-\s*Ends\b.*$",                            # "- Ends Published By: ..."
+            r"\bPublished\s+By\s*:\s*.{0,60}$",             # "Published By: Armaan Agarwal"
+            r"\bPublished\s+On\s*:\s*.{0,40}$",             # "Published On: Apr 21, 2026 11:27 IST"
+            r"\bAlso\s+Read\s*[|:].+$",                     # "Also Read | Who is new Apple CEO..."
+            r"\bStory\s+continues\s+below\s+this\s+ad\b.*$",
+            r"\bAdvertisement\b.*$",
+            r"\bRead\s+more\s+at\s+TOI\b.*$",
+            r"\bFORTHCOMING\s+STORIES\b.*$",
+            r"\bSubscribe\s+to\s+India\s+Today\b.*$",
+            r"\bGet\s+latest\s+news\s+on\b.*$",
+            r"(?:Watch|Follow)\s+(?:live|us\s+on)\b.*$",
+        ]
+        import re as _re
+        _cleaned = article_body_raw
+        for _pat in _BOILERPLATE_PATTERNS:
+            _cleaned = _re.sub(_pat, "", _cleaned, flags=_re.IGNORECASE | _re.DOTALL).strip()
+        article_body = _cleaned[:5200]
+
         if not article_title or not article_body:
             return None
         if not self.client or not self.client.available:
