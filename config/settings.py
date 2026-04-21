@@ -147,18 +147,18 @@ DEFAULT_SOURCE_CREDIBILITY = {
 }
 
 DEFAULT_IMAGE_THRESHOLDS = {
-    "min_width": 420,
-    "min_height": 236,
-    "min_file_size_bytes": 30000,
-    "min_aspect_ratio": 0.4,
-    "max_aspect_ratio": 2.8,
-    "min_sharpness": 18.0,
-    "min_relevance": 0.12,
+    "min_width": 400,
+    "min_height": 220,
+    "min_file_size_bytes": 15000,
+    "min_aspect_ratio": 0.35,
+    "max_aspect_ratio": 3.2,
+    "min_sharpness": 6.0,
+    "min_relevance": 0.05,
     "vision_weight": 0.25,
-    "min_vision_quality": 0.58,
-    "min_vision_relevance": 0.4,
-    "vision_max_candidates": 3,
-    "max_probe_candidates": 5,
+    "min_vision_quality": 0.45,
+    "min_vision_relevance": 0.35,
+    "vision_max_candidates": 6,
+    "max_probe_candidates": 12,
 }
 
 DEFAULT_CATEGORY_PUBLISH_PLAN: List[Dict[str, Any]] = [

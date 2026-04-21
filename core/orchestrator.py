@@ -920,39 +920,43 @@ class HardenedOrchestrator:
 
         metrics.record_image_result(image_result.passed, image_result.rejection_reasons[0] if image_result.rejection_reasons else "")
 
-        if not image_result.passed and not image_result.needs_image:
-            self.logger.warning(
-                f"Skipping publish due to missing valid image. url={article.url} reasons={image_result.rejection_reasons}"
-            )
-            return False, "image_missing"
+        # ── Image resolution: 3-tier fallback chain ───────────────────────────────
+        # Tier 1: image pipeline found and downloaded a vetted local image
+        local_image_path = image_result.local_path if (image_result.local_path and os.path.exists(image_result.local_path)) else None
 
-        # Strict relevance gate: publish only when the image pipeline produced a vetted local image.
-        if not image_result.local_path or not os.path.exists(image_result.local_path):
-            self.logger.warning(
-                "Skipping publish because no vetted local image is available from quality pipeline. "
-                f"url={article.url} reasons={image_result.rejection_reasons}"
-            )
-            return False, "image_missing"
+        # Tier 2: pipeline failed → use the article's own og_image / main_image URL
+        fallback_image_url: Optional[str] = None
+        if not local_image_path:
+            fallback_image_url = self._select_fallback_image_url(article)
+            if fallback_image_url:
+                self.logger.info(f"image.tier2_fallback url={fallback_image_url[:80]} article={article.url}")
+            else:
+                # Tier 3: CMS will do a Google image search using image_search_query
+                self.logger.info(f"image.tier3_search query={image_search_query!r} article={article.url}")
 
-        # Image dedup: skip if this exact image URL was already published in a previous run.
-        _image_source_url = str(getattr(image_result, "source_url", "") or "").strip()
-        if not _image_source_url:
-            _image_source_url = str(getattr(article, "og_image", "") or getattr(article, "main_image", "") or "").strip()
+        # Image dedup: skip if this exact image URL was already published
+        _image_source_url = (
+            str(getattr(image_result, "source_url", "") or "").strip()
+            or str(getattr(article, "og_image", "") or getattr(article, "main_image", "") or "").strip()
+        )
         if _image_source_url and self.memory.is_image_used_in_supabase(_image_source_url):
             self.logger.info(f"skip.duplicate_image image_url={_image_source_url[:80]} url={article.url}")
             return False, "duplicate_image"
 
         hashtag = self._build_hashtags(category=category, title=summary["title"], is_breaking=is_breaking)
-        self.logger.info(f"publish.meta category={category} hashtag={hashtag}")
+        self.logger.info(f"publish.meta category={category} hashtag={hashtag} image_tier={'local' if local_image_path else 'fallback_url' if fallback_image_url else 'search'}")
+
+        # Allow missing image only when we have a fallback strategy (URL or search)
+        allow_missing = (local_image_path is None)
 
         validation = self.validator.validate(
             english_title=summary["title"],
             english_body=summary["body"],
             category=category,
-            image_path=image_result.local_path,
+            image_path=local_image_path,
             hashtag=hashtag,
-            image_search_query="",
-            allow_missing_image=False,
+            image_search_query=image_search_query,
+            allow_missing_image=allow_missing,
         )
         if not validation.is_valid:
             self.logger.warning(f"Validation failed for article: {validation.error_message}")
@@ -963,10 +967,10 @@ class HardenedOrchestrator:
             english_body=summary["body"],
             category=category,
             hashtag=hashtag,
-            image_path=image_result.local_path,
-            image_search_query="",
-            needs_image=image_result.needs_image,
-            image_url=None,
+            image_path=local_image_path,
+            image_search_query=image_search_query if not local_image_path and not fallback_image_url else "",
+            needs_image=(local_image_path is None),
+            image_url=fallback_image_url,
             image_metadata={
                 "quality": image_result.metadata,
                 "rejection_reasons": image_result.rejection_reasons,
