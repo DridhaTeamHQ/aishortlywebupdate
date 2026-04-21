@@ -23,6 +23,10 @@ class EventResolver:
         "countries", "people", "person", "issue", "issues", "move", "moves", "plan", "plans", "meeting",
         "talk", "talks", "warning", "warn", "warns", "threat", "threats", "major", "fresh",
     }
+    _STORY_KEY_GENERIC_TOKENS = {
+        "name", "names", "named", "next", "ceo", "chief", "executive", "prepare", "prepares",
+        "step", "steps", "down", "successor", "appoint", "appoints", "appointed",
+    }
     _TOKEN_CANONICAL = {
         "attacks": "strike",
         "attack": "strike",
@@ -194,6 +198,18 @@ class EventResolver:
         lead_tokens = self._salient_tokens(self._lead_text(article.body))
         return set(title_tokens + lead_tokens) | self._token_bigrams(title_tokens) | self._token_bigrams(lead_tokens)
 
+    def _entity_like_tokens(self, text: str) -> List[str]:
+        tokens: List[str] = []
+        for raw in re.findall(r"\b[A-Z][A-Za-z0-9'-]{2,}\b", text or ""):
+            token = self._canonical_token(raw.lower())
+            if len(token) < 3:
+                continue
+            if token in self._STOPWORDS or token in self._GENERIC_NEWS_TOKENS:
+                continue
+            if token not in tokens:
+                tokens.append(token)
+        return tokens
+
     def _token_jaccard(self, a: Set[str], b: Set[str]) -> float:
         if not a or not b:
             return 0.0
@@ -210,26 +226,51 @@ class EventResolver:
         return bool(nums_a & nums_b)
 
     def _cluster_story_key(self, group: List[IngestedArticle]) -> str:
-        feature_scores: Dict[str, int] = {}
-        for article in group:
-            title_tokens = self._salient_tokens(article.title)
-            lead_tokens = self._salient_tokens(self._lead_text(article.body))
-            for token in title_tokens:
-                feature_scores[token] = feature_scores.get(token, 0) + 3
-            for token in lead_tokens:
-                feature_scores[token] = feature_scores.get(token, 0) + 1
-            for phrase in self._token_bigrams(title_tokens):
-                feature_scores[phrase] = feature_scores.get(phrase, 0) + 4
+        if not group:
+            return ""
 
-        ranked = sorted(
-            feature_scores.items(),
-            key=lambda row: (-row[1], 0 if " " in row[0] else 1, -len(row[0]), row[0]),
+        representative = max(
+            group,
+            key=lambda item: (
+                len(item.title or ""),
+                len(self._lead_text(item.body or "")),
+                len(item.body or ""),
+            ),
         )
-        picked = [feature for feature, _ in ranked[:8]]
+        title_tokens = sorted(
+            {
+                token
+                for token in self._salient_tokens(representative.title)
+                if token not in self._STORY_KEY_GENERIC_TOKENS
+            }
+        )
+        lead_tokens = sorted(set(self._salient_tokens(self._lead_text(representative.body))))
+        number_tokens = sorted(self._number_tokens(f"{representative.title} {self._lead_text(representative.body)}"))
+        entity_tokens = sorted(set(self._entity_like_tokens(representative.title)))
+
+        picked: List[str] = []
+        picked.extend(entity_tokens[:8])
+        if len(picked) < 3:
+            for token in title_tokens:
+                if token not in picked:
+                    picked.append(token)
+                if len(picked) >= 10:
+                    break
+        if len(picked) < 4:
+            for token in lead_tokens:
+                if token not in picked:
+                    picked.append(token)
+                if len(picked) >= 12:
+                    break
+        for token in number_tokens:
+            if token not in picked:
+                picked.append(token)
+
         if not picked:
-            fallback = self._normalize(max(group, key=lambda item: len(item.title)).title)
+            fallback = self._normalize(representative.title)
             return hashlib.sha1(fallback.encode("utf-8")).hexdigest()[:16]
-        base = "|".join(sorted(picked))
+
+        base = "|".join(picked)
         return hashlib.sha1(base.encode("utf-8")).hexdigest()[:16]
 
     def _jaccard(self, a: str, b: str) -> float:

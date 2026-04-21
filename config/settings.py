@@ -282,7 +282,7 @@ def get_settings() -> Settings:
         image_mode=_get_image_mode(os.getenv("IMAGE_MODE")),
 
         max_articles=int(os.getenv("MAX_ARTICLES", "5")),
-        max_links_per_source=int(os.getenv("MAX_LINKS_PER_SOURCE", "15")),
+        max_links_per_source=int(os.getenv("MAX_LINKS_PER_SOURCE", "50")),
         max_article_age_minutes=int(
             os.getenv(
                 "MAX_ARTICLE_AGE_MINUTES",

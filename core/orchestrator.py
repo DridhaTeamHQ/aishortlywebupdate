@@ -264,19 +264,29 @@ class HardenedOrchestrator:
         consecutive_publish_failures = 0
         stop_run = False
         published_story_keys: set[str] = set()
+        max_articles_per_run = max(0, int(getattr(self.settings, "max_articles", 0)))
 
         for step in self.publish_plan:
             if self._is_cancelled():
                 stop_run = True
                 break
+            if max_articles_per_run and published >= max_articles_per_run:
+                self.logger.info(
+                    f"run.limit_reached published={published} max_articles={max_articles_per_run}"
+                )
+                break
             category = str(step["category"])
             total_target = int(step["total"])
             breaking_target = int(step["breaking_target"])
+            remaining_slots = (max_articles_per_run - published) if max_articles_per_run else 0
             total_target, breaking_target = self._effective_publish_targets(
                 total_target,
                 breaking_target,
                 active_category_count,
+                remaining_slots=remaining_slots,
             )
+            if total_target <= 0:
+                break
 
             category_rows = clusters_by_category.get(category, [])
             if not category_rows:
@@ -335,6 +345,12 @@ class HardenedOrchestrator:
                 if self._story_already_published(cluster_story_key, published_story_keys):
                     self.logger.info(
                         f"skip.duplicate_story story_key={cluster_story_key} title={getattr(cluster, 'canonical_title', '')}"
+                    )
+                    continue
+                cluster_title = str(getattr(cluster, "canonical_title", "") or "").strip()
+                if cluster_title and self._is_title_similar(cluster_title):
+                    self.logger.info(
+                        f"skip.duplicate_cluster_title title={cluster_title[:80]} story_key={cluster_story_key}"
                     )
                     continue
                 cluster_source = self._cluster_primary_source(cluster)
@@ -407,6 +423,9 @@ class HardenedOrchestrator:
                         published_title = getattr(cluster, "canonical_title", "") or getattr(article, "title", "") or ""
                         if published_title:
                             self._published_titles.append(published_title.strip())
+                        article_title = str(getattr(article, "title", "") or "").strip()
+                        if article_title and article_title != published_title:
+                            self._published_titles.append(article_title)
                         published_from_cluster = True
                         break
 
@@ -464,17 +483,22 @@ class HardenedOrchestrator:
     def _pick_representative(self, articles: List[object]):
         return max(articles, key=lambda a: len(getattr(a, "body", "") or ""), default=None)
 
-    def _effective_publish_targets(self, total_target: int, breaking_target: int, active_category_count: int) -> Tuple[int, int]:
+    def _effective_publish_targets(
+        self,
+        total_target: int,
+        breaking_target: int,
+        active_category_count: int,
+        remaining_slots: int = 0,
+    ) -> Tuple[int, int]:
         if active_category_count <= 0:
-            return total_target, breaking_target
-        if active_category_count == 1:
-            total_target = min(total_target, 2)
-        elif active_category_count == 2:
-            total_target = min(total_target, 3)
-
+            total_target = 0 if remaining_slots == 0 else min(total_target, remaining_slots)
+            return total_target, max(0, min(breaking_target, total_target))
+        if remaining_slots > 0:
+            if active_category_count == 1:
+                total_target = remaining_slots
+            else:
+                total_target = min(total_target, remaining_slots)
         breaking_target = max(0, min(breaking_target, total_target))
-        if active_category_count <= 2:
-            breaking_target = min(breaking_target, 1)
         return total_target, breaking_target
 
     def _priority_keyword_score(self, text: str, category: str) -> int:
@@ -898,6 +922,11 @@ class HardenedOrchestrator:
             return False, "summary_failed"
 
         # Fuzzy title dedup: skip if we already published a very similar title this run
+        if self._is_title_similar(article.title):
+            self.logger.info(
+                f"skip.duplicate_source_title title={article.title[:60]} url={article.url}"
+            )
+            return False, "duplicate_title"
         if self._is_title_similar(summary["title"]):
             self.logger.info(
                 f"skip.duplicate_title title={summary['title'][:60]} url={article.url}"
@@ -990,6 +1019,9 @@ class HardenedOrchestrator:
         if workflow_ok:
             # Track the summarized title for fuzzy dedup within this run
             self._published_titles.append(summary["title"].strip())
+            source_title = str(getattr(article, "title", "") or "").strip()
+            if source_title and source_title != summary["title"].strip():
+                self._published_titles.append(source_title)
             return True, ""
         return False, "workflow_failed"
 
