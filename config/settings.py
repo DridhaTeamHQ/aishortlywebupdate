@@ -153,7 +153,7 @@ DEFAULT_IMAGE_THRESHOLDS = {
     "min_aspect_ratio": 0.35,
     "max_aspect_ratio": 3.2,
     "min_sharpness": 6.0,
-    "min_relevance": 0.05,
+    "min_relevance": 0.10,
     "vision_weight": 0.25,
     "min_vision_quality": 0.45,
     "min_vision_relevance": 0.35,

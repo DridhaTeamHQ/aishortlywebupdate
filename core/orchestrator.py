@@ -616,7 +616,7 @@ class HardenedOrchestrator:
             # Combined score: entities weigh 2× more than common words
             combined = (word_sim * 0.4) + (entity_sim * 0.6) if entity_sim > 0 else word_sim
 
-            if combined >= 0.50:
+            if combined >= 0.60:
                 self.logger.info(
                     f"dedup.title_match score={combined:.2f} word_sim={word_sim:.2f} entity_sim={entity_sim:.2f} "
                     f"new={new_title[:50]} vs existing={published_title[:50]}"
@@ -920,19 +920,24 @@ class HardenedOrchestrator:
 
         metrics.record_image_result(image_result.passed, image_result.rejection_reasons[0] if image_result.rejection_reasons else "")
 
-        # ── Image resolution: 3-tier fallback chain ───────────────────────────────
+        # ── Image resolution: 2-tier fallback chain ───────────────────────────────
         # Tier 1: image pipeline found and downloaded a vetted local image
         local_image_path = image_result.local_path if (image_result.local_path and os.path.exists(image_result.local_path)) else None
 
-        # Tier 2: pipeline failed → use the article's own og_image / main_image URL
+        # Tier 2: pipeline failed → use the article's own og_image / main_image URL directly
+        # NOTE: Tier 3 (Google Image Search) is intentionally DISABLED — it returns random
+        # unrelated images (e.g. market people for an oil crisis article). Skip instead.
         fallback_image_url: Optional[str] = None
         if not local_image_path:
             fallback_image_url = self._select_fallback_image_url(article)
             if fallback_image_url:
                 self.logger.info(f"image.tier2_fallback url={fallback_image_url[:80]} article={article.url}")
             else:
-                # Tier 3: CMS will do a Google image search using image_search_query
-                self.logger.info(f"image.tier3_search query={image_search_query!r} article={article.url}")
+                self.logger.warning(
+                    f"image.no_image_available — skipping article to avoid wrong image. "
+                    f"url={article.url} reasons={image_result.rejection_reasons}"
+                )
+                return False, "image_missing"
 
         # Image dedup: skip if this exact image URL was already published
         _image_source_url = (
@@ -968,7 +973,7 @@ class HardenedOrchestrator:
             category=category,
             hashtag=hashtag,
             image_path=local_image_path,
-            image_search_query=image_search_query if not local_image_path and not fallback_image_url else "",
+            image_search_query="",
             needs_image=(local_image_path is None),
             image_url=fallback_image_url,
             image_metadata={
