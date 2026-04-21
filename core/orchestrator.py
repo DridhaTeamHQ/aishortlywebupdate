@@ -187,6 +187,19 @@ class HardenedOrchestrator:
     async def _run_once(self) -> None:
         metrics = PipelineMetrics()
 
+        # ── Cross-run intelligence: preload recently published titles from Supabase ──
+        try:
+            supabase_titles = self.memory.get_recent_published_titles(within_hours=48)
+            if supabase_titles:
+                # Merge into _published_titles so _is_title_similar covers cross-run dupes
+                existing = set(self._published_titles)
+                for t in supabase_titles:
+                    if t not in existing:
+                        self._published_titles.append(t)
+                self.logger.info(f"dedup.preloaded {len(supabase_titles)} titles from Supabase for cross-run dedup")
+        except Exception as exc:
+            self.logger.warning(f"Cross-run title preload failed (non-fatal): {exc}")
+
         if self._is_cancelled():
             return
         await self._emit_event("SCRAPE_STARTED", {})
@@ -523,28 +536,93 @@ class HardenedOrchestrator:
         dedupe_hours = int(getattr(self.settings, "story_dedupe_hours", 48))
         return bool(self.memory.is_story_success(key, within_hours=dedupe_hours))
 
+    # ── Intelligent Stemming Table ───────────────────────────────────────
+    _STEM_SUFFIXES = [
+        ("ies", "y"),     # economies → economy
+        ("ves", "f"),     # halves → half
+        ("ses", "s"),     # crises → crisis
+        ("ches", "ch"),   # launches → launch
+        ("shes", "sh"),   # crashes → crash
+        ("xes", "x"),     # taxes → tax
+        ("zes", "z"),     # buzzes → buzz
+        ("ness", ""),     # weakness → weak (approximate)
+        ("ment", ""),     # announcement → announce (approximate)
+        ("ing", ""),      # leading → lead
+        ("tion", ""),     # situation → situa (acceptable for matching)
+        ("ed", ""),       # launched → launch
+        ("er", ""),       # leader → lead
+        ("ly", ""),       # reportedly → reported
+        ("es", ""),       # surges → surg
+        ("s", ""),        # steps → step
+    ]
+
+    def _stem(self, word: str) -> str:
+        """Simple rule-based stemmer, no dependencies needed."""
+        if len(word) <= 4:
+            return word
+        for suffix, replacement in self._STEM_SUFFIXES:
+            if word.endswith(suffix) and len(word) - len(suffix) >= 3:
+                return word[: -len(suffix)] + replacement
+        return word
+
     def _title_word_set(self, title: str) -> set[str]:
-        """Extract significant words (4+ chars, no stopwords) for fuzzy matching."""
+        """Extract significant stemmed words for fuzzy matching."""
         words = set()
         for token in re.findall(r"[a-z0-9]{3,}", (title or "").lower()):
-            if token not in STOPWORDS and len(token) >= 3:
-                words.add(token)
+            if token not in STOPWORDS:
+                words.add(self._stem(token))
         return words
 
+    def _title_entities(self, title: str) -> set[str]:
+        """Extract proper nouns (capitalized words) — names, places, orgs."""
+        entities = set()
+        # Find capitalized words that aren't at sentence start
+        words = (title or "").split()
+        for i, word in enumerate(words):
+            clean = re.sub(r"[^a-zA-Z0-9]", "", word)
+            if not clean or len(clean) < 2:
+                continue
+            # Proper noun: starts uppercase and not a common stopword
+            if clean[0].isupper() and clean.lower() not in STOPWORDS:
+                entities.add(clean.lower())
+        return entities
+
     def _is_title_similar(self, new_title: str) -> bool:
-        """Check if new_title is too similar to any already-published title this run."""
+        """Smart similarity: stemmed Jaccard + entity overlap, checks all published titles."""
         new_words = self._title_word_set(new_title)
+        new_entities = self._title_entities(new_title)
         if len(new_words) < 2:
             return False
+
         for published_title in self._published_titles:
             pub_words = self._title_word_set(published_title)
             if len(pub_words) < 2:
                 continue
-            # Jaccard similarity: intersection / union
+
+            # Layer 1: Stemmed word Jaccard similarity
             overlap = len(new_words & pub_words)
             union = len(new_words | pub_words)
-            if union > 0 and (overlap / union) >= 0.55:
+            word_sim = (overlap / union) if union > 0 else 0.0
+
+            # Layer 2: Entity overlap (proper nouns — much stronger signal)
+            pub_entities = self._title_entities(published_title)
+            if new_entities and pub_entities:
+                entity_overlap = len(new_entities & pub_entities)
+                entity_union = len(new_entities | pub_entities)
+                entity_sim = (entity_overlap / entity_union) if entity_union > 0 else 0.0
+            else:
+                entity_sim = 0.0
+
+            # Combined score: entities weigh 2× more than common words
+            combined = (word_sim * 0.4) + (entity_sim * 0.6) if entity_sim > 0 else word_sim
+
+            if combined >= 0.50:
+                self.logger.info(
+                    f"dedup.title_match score={combined:.2f} word_sim={word_sim:.2f} entity_sim={entity_sim:.2f} "
+                    f"new={new_title[:50]} vs existing={published_title[:50]}"
+                )
                 return True
+
         return False
 
     def _pop_with_source_backoff(

@@ -10,8 +10,9 @@ Tracks:
 import os
 import sqlite3
 import shutil
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import List
 from urllib.parse import urlparse, urlunparse
 
 from utils.logger import get_logger
@@ -136,6 +137,29 @@ class AgentMemory:
         except Exception as exc:
             self.logger.warning(f"Supabase image dedup check failed: {exc}")
             return False
+
+    def get_recent_published_titles(self, within_hours: int = 48) -> List[str]:
+        """Fetch titles of recently published articles from Supabase for cross-run dedup."""
+        if not self._sb:
+            return []
+        try:
+            cutoff = (datetime.now(timezone.utc) - timedelta(hours=within_hours)).isoformat()
+            result = (
+                self._sb.table(self._SUPABASE_TABLE)
+                .select("title")
+                .gte("published_at", cutoff)
+                .limit(200)
+                .execute()
+            )
+            titles = []
+            for row in (result.data or []):
+                title = (row.get("title") or "").strip()
+                if title:
+                    titles.append(title)
+            return titles
+        except Exception as exc:
+            self.logger.warning(f"Supabase title fetch failed: {exc}")
+            return []
 
     # ── Local SQLite ────────────────────────────────────────────────────────
 
