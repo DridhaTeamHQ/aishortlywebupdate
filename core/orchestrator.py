@@ -109,6 +109,9 @@ class HardenedOrchestrator:
         self.max_login_retries = 2
         self.max_consecutive_publish_failures = 10
 
+        # Fuzzy title dedup: track all titles published in this run
+        self._published_titles: List[str] = []
+
         # Worker integration hooks
         self._cancel_check = None
         self._event_sink = None
@@ -387,6 +390,10 @@ class HardenedOrchestrator:
                             story_key=cluster_story_key or "",
                             image_url=str(getattr(article, "og_image", "") or getattr(article, "main_image", "") or "").strip(),
                         )
+                        # Track the published title for fuzzy dedup within this run
+                        published_title = getattr(cluster, "canonical_title", "") or getattr(article, "title", "") or ""
+                        if published_title:
+                            self._published_titles.append(published_title.strip())
                         published_from_cluster = True
                         break
 
@@ -515,6 +522,30 @@ class HardenedOrchestrator:
             return True
         dedupe_hours = int(getattr(self.settings, "story_dedupe_hours", 48))
         return bool(self.memory.is_story_success(key, within_hours=dedupe_hours))
+
+    def _title_word_set(self, title: str) -> set[str]:
+        """Extract significant words (4+ chars, no stopwords) for fuzzy matching."""
+        words = set()
+        for token in re.findall(r"[a-z0-9]{3,}", (title or "").lower()):
+            if token not in STOPWORDS and len(token) >= 3:
+                words.add(token)
+        return words
+
+    def _is_title_similar(self, new_title: str) -> bool:
+        """Check if new_title is too similar to any already-published title this run."""
+        new_words = self._title_word_set(new_title)
+        if len(new_words) < 2:
+            return False
+        for published_title in self._published_titles:
+            pub_words = self._title_word_set(published_title)
+            if len(pub_words) < 2:
+                continue
+            # Jaccard similarity: intersection / union
+            overlap = len(new_words & pub_words)
+            union = len(new_words | pub_words)
+            if union > 0 and (overlap / union) >= 0.55:
+                return True
+        return False
 
     def _pop_with_source_backoff(
         self,
@@ -788,6 +819,13 @@ class HardenedOrchestrator:
         if not summary:
             return False, "summary_failed"
 
+        # Fuzzy title dedup: skip if we already published a very similar title this run
+        if self._is_title_similar(summary["title"]):
+            self.logger.info(
+                f"skip.duplicate_title title={summary['title'][:60]} url={article.url}"
+            )
+            return False, "duplicate_title"
+
         category = self._decide_cms_category(article, summary["title"], summary["body"])
         image_search_query = self._build_image_query(article, summary["title"], category)
 
@@ -863,6 +901,8 @@ class HardenedOrchestrator:
         if self._is_cancelled():
             return False, "cancelled"
         if workflow_ok:
+            # Track the summarized title for fuzzy dedup within this run
+            self._published_titles.append(summary["title"].strip())
             return True, ""
         return False, "workflow_failed"
 
