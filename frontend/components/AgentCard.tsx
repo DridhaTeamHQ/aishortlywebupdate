@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import CategoryDropdown, { CategoryOption } from './CategoryDropdown';
 
 export type Agent = {
   id: string;
@@ -19,14 +20,14 @@ type Props = {
   currentStep?: string;
 };
 
-const CATEGORY_OPTIONS: { value: string; label: string }[] = [
-  { value: 'all', label: '🗞️  All Categories' },
-  { value: 'international', label: '🌍  International' },
-  { value: 'national', label: '🇮🇳  National' },
-  { value: 'politics', label: '🏛️  Politics' },
-  { value: 'business', label: '💹  Finance & Business' },
-  { value: 'tech', label: '💻  Technology' },
-  { value: 'sports', label: '🏆  Sports' },
+const CATEGORY_OPTIONS: CategoryOption[] = [
+  { value: 'all',           icon: '🗞️', label: 'All Categories' },
+  { value: 'international', icon: '🌍', label: 'International' },
+  { value: 'national',      icon: '🇮🇳', label: 'National' },
+  { value: 'politics',      icon: '🏛️', label: 'Politics' },
+  { value: 'business',      icon: '💹', label: 'Finance & Business' },
+  { value: 'tech',          icon: '💻', label: 'Technology' },
+  { value: 'sports',        icon: '🏆', label: 'Sports' },
 ];
 
 export default function AgentCard({ agent, isRunning, onStartRun, onStopRun, runStatus, currentStep }: Props) {
@@ -80,36 +81,27 @@ export default function AgentCard({ agent, isRunning, onStartRun, onStopRun, run
 
       <div className="agent-meta">
         <div className="agent-meta-item">
-          <span>Tag</span>
-          <span>{agent.slug}</span>
+          <span className="meta-key">Tag</span>
+          <span className="meta-val">{agent.slug}</span>
         </div>
         {currentStep && (
           <div className="agent-meta-item">
-            <span>Step</span>
-            <span>{currentStep}</span>
+            <span className="meta-key">Step</span>
+            <span className="meta-val">{currentStep}</span>
           </div>
         )}
       </div>
 
       {!isRunning && (
-        <div style={{ marginBottom: 10 }}>
-          <label
-            htmlFor={`cat-${agent.id}`}
-            style={{ display: 'block', fontSize: 12, color: '#9ca3af', marginBottom: 6 }}
-          >
-            News Category
-          </label>
-          <select
+        <div style={{ marginBottom: 14 }}>
+          <label htmlFor={`cat-${agent.id}`}>News Category</label>
+          <CategoryDropdown
             id={`cat-${agent.id}`}
-            className="category-select"
+            options={CATEGORY_OPTIONS}
             value={category}
-            onChange={(e) => setCategory(e.target.value)}
+            onChange={setCategory}
             disabled={busy || !agent.enabled}
-          >
-            {CATEGORY_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
-            ))}
-          </select>
+          />
         </div>
       )}
 
