@@ -215,7 +215,34 @@ class HardenedOrchestrator:
         if self._is_cancelled():
             return
         await self._emit_event("SCRAPE_STARTED", {})
-        by_category = self.ingestion.run()
+
+        # Capture loop so progress callbacks from worker threads can schedule async emits.
+        try:
+            running_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            running_loop = None
+
+        def _sync_progress(event_type: str, data: dict) -> None:
+            if not self._event_sink:
+                return
+            try:
+                result = self._event_sink(event_type, data or {})
+                if asyncio.iscoroutine(result):
+                    if running_loop is not None:
+                        asyncio.run_coroutine_threadsafe(result, running_loop)
+                    else:
+                        result.close()
+            except Exception:
+                pass
+
+        category_filter = (os.getenv("RUN_CATEGORY_FILTER") or "").strip().lower() or None
+
+        # Run ingestion in a worker thread so cancellation checks stay responsive.
+        by_category = await asyncio.to_thread(
+            self.ingestion.run,
+            category_filter=category_filter,
+            progress_callback=_sync_progress,
+        )
         metrics.record_category_counts(by_category)
         total_scraped = sum(len(rows) for rows in by_category.values())
         await self._emit_event("SCRAPE_DONE", {"total": total_scraped})

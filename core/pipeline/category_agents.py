@@ -1,12 +1,20 @@
 ﻿from __future__ import annotations
 
+import os
 import re
+import threading
+from concurrent.futures import ALL_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional
 
 from utils.logger import get_logger
 from .models import CategoryName, IngestedArticle
+
+
+_PER_CATEGORY_TIMEOUT = int(os.getenv("SCRAPE_PER_CATEGORY_TIMEOUT", "120"))
+_MAX_WORKERS_PER_CATEGORY = int(os.getenv("SCRAPE_MAX_WORKERS", "6"))
+_CACHE_LOCK = threading.Lock()
 
 from core.sources.timesofindia import TimesOfIndiaScraper
 from core.sources.ndtv import NDTVScraper
@@ -169,32 +177,73 @@ class CategoryAgent:
         return age <= timedelta(minutes=self.max_article_age_minutes)
 
     def run(self) -> List[IngestedArticle]:
+        """Concurrently scrape all sources for this category with a hard timeout."""
         collected: List[IngestedArticle] = []
         skipped_stale = 0
+
+        valid: List[tuple[SourceConfig, Callable[[], Any]]] = []
         for source in self.sources:
             scraper_factory = SCRAPER_REGISTRY.get(source.scraper)
             if not scraper_factory:
                 self.logger.warning(f"Unknown scraper '{source.scraper}' for source {source.name}")
                 continue
+            valid.append((source, scraper_factory))
 
-            rows = self._fetch_source_rows(source, scraper_factory)
-            for row in rows:
-                ingested = IngestedArticle(
-                    category=self.category,
-                    source=str(row.get("source", "")),
-                    source_url=str(row.get("source_url", "")),
-                    url=str(row.get("url", "")),
-                    title=str(row.get("title", "")),
-                    body=str(row.get("body", "")),
-                    published_time=row.get("published_time"),
-                    og_image=row.get("og_image"),
-                    main_image=row.get("main_image"),
+        if not valid:
+            return []
+
+        max_workers = max(1, min(len(valid), _MAX_WORKERS_PER_CATEGORY))
+        all_rows: List[Dict[str, object]] = []
+
+        with ThreadPoolExecutor(
+            max_workers=max_workers,
+            thread_name_prefix=f"scrape-{self.category}",
+        ) as executor:
+            future_to_source = {
+                executor.submit(self._fetch_source_rows, source, scraper_factory): source
+                for source, scraper_factory in valid
+            }
+
+            done, pending = wait(
+                future_to_source.keys(),
+                timeout=_PER_CATEGORY_TIMEOUT,
+                return_when=ALL_COMPLETED,
+            )
+
+            for future in pending:
+                source = future_to_source[future]
+                self.logger.warning(
+                    f"{source.name} ({self.category}) timed out after {_PER_CATEGORY_TIMEOUT}s — skipped"
                 )
-                if not self._is_fresh_article(ingested):
-                    skipped_stale += 1
+                future.cancel()
+
+            for future in done:
+                source = future_to_source[future]
+                try:
+                    rows = future.result(timeout=0)
+                except Exception as exc:
+                    self.logger.error(f"{source.name} ({self.category}) failed: {exc}")
                     continue
-                if self._matches_category(ingested):
-                    collected.append(ingested)
+                self.logger.info(f"{source.name} ({self.category}): rows={len(rows)}")
+                all_rows.extend(rows)
+
+        for row in all_rows:
+            ingested = IngestedArticle(
+                category=self.category,
+                source=str(row.get("source", "")),
+                source_url=str(row.get("source_url", "")),
+                url=str(row.get("url", "")),
+                title=str(row.get("title", "")),
+                body=str(row.get("body", "")),
+                published_time=row.get("published_time"),
+                og_image=row.get("og_image"),
+                main_image=row.get("main_image"),
+            )
+            if not self._is_fresh_article(ingested):
+                skipped_stale += 1
+                continue
+            if self._matches_category(ingested):
+                collected.append(ingested)
 
         self.logger.info(
             f"Category {self.category}: scraped {len(collected)} fresh articles, skipped_stale={skipped_stale}"
@@ -203,8 +252,10 @@ class CategoryAgent:
 
     def _fetch_source_rows(self, source: SourceConfig, scraper_factory: Callable[[], Any]) -> List[Dict[str, object]]:
         cache_key = f"{source.scraper}|{source.url}|{self.max_links_per_source}"
-        if self.shared_cache is not None and cache_key in self.shared_cache:
-            return self.shared_cache[cache_key]
+        if self.shared_cache is not None:
+            with _CACHE_LOCK:
+                if cache_key in self.shared_cache:
+                    return self.shared_cache[cache_key]
 
         rows: List[Dict[str, object]] = []
         scraper = scraper_factory()
@@ -239,7 +290,8 @@ class CategoryAgent:
                 pass
 
         if self.shared_cache is not None:
-            self.shared_cache[cache_key] = rows
+            with _CACHE_LOCK:
+                self.shared_cache[cache_key] = rows
 
         return rows
 
@@ -374,11 +426,34 @@ class MultiAgentIngestion:
         self.max_article_age_minutes = max_article_age_minutes
         self.require_published_time = require_published_time
 
-    def run(self) -> Dict[CategoryName, List[IngestedArticle]]:
+    def run(
+        self,
+        category_filter: Optional[str] = None,
+        progress_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None,
+    ) -> Dict[CategoryName, List[IngestedArticle]]:
         by_category: Dict[CategoryName, List[IngestedArticle]] = {}
         shared_cache: Dict[str, List[Dict[str, object]]] = {}
 
-        for category, source_rows in self.category_sources.items():
+        targets = list(self.category_sources.items())
+        cf = (category_filter or "").strip().lower()
+        if cf and cf not in {"", "all"}:
+            filtered = [(c, s) for c, s in targets if str(c).lower() == cf]
+            if filtered:
+                targets = filtered
+                self.logger.info(f"ingestion.filter applied={cf} categories={len(targets)}")
+            else:
+                self.logger.warning(f"ingestion.filter unknown={cf} — scraping all categories")
+
+        def _emit(event_type: str, data: Dict[str, Any]) -> None:
+            if not progress_callback:
+                return
+            try:
+                progress_callback(event_type, data)
+            except Exception:
+                pass
+
+        for category, source_rows in targets:
+            _emit("LOG", {"message": f"📡 Scraping {category} ({len(source_rows)} sources)..."})
             sources = [SourceConfig(**row) for row in source_rows]
             agent = CategoryAgent(
                 category=category,
@@ -388,7 +463,13 @@ class MultiAgentIngestion:
                 max_article_age_minutes=self.max_article_age_minutes,
                 require_published_time=self.require_published_time,
             )
-            by_category[category] = agent.run()
+            try:
+                articles = agent.run()
+            except Exception as exc:
+                self.logger.error(f"Category {category} ingestion crashed: {exc}")
+                articles = []
+            by_category[category] = articles
+            _emit("LOG", {"message": f"✓ {category}: {len(articles)} fresh articles"})
 
         total = sum(len(v) for v in by_category.values())
         self.logger.info(f"Ingestion complete: {total} total articles")
