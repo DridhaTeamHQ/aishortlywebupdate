@@ -568,6 +568,10 @@ label {
 .agent-card {
   position: relative;
   overflow: visible;
+  z-index: 20;
+}
+.agent-card:focus-within {
+  z-index: 50;
 }
 .agent-card::before {
   border-top-left-radius: var(--radius);
