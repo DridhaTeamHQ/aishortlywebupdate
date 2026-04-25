@@ -94,6 +94,18 @@ export async function POST(
     const sb = getServiceClient();
     const agentId = params.agentId;
 
+    const ALLOWED_CATEGORIES = new Set([
+      'all', 'international', 'national', 'business', 'sports', 'tech', 'environment', 'crime',
+    ]);
+    let category = 'all';
+    try {
+      const body = await request.json();
+      const raw = String(body?.category || '').trim().toLowerCase();
+      if (ALLOWED_CATEGORIES.has(raw)) category = raw;
+    } catch {
+      // No body or invalid JSON — default to 'all'
+    }
+
     const { data: profile } = await sb
       .from('profiles')
       .select('org_id')
@@ -145,6 +157,7 @@ export async function POST(
         created_by: user.id,
         status: 'queued',
         current_step: 'queued',
+        category,
       })
       .select('id, status')
       .single();

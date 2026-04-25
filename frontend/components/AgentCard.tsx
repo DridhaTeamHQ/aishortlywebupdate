@@ -13,22 +13,34 @@ export type Agent = {
 type Props = {
   agent: Agent;
   isRunning: boolean;
-  onStartRun: () => Promise<void>;
+  onStartRun: (category: string) => Promise<void>;
   onStopRun: () => Promise<void>;
   runStatus?: string;
   currentStep?: string;
 };
 
+const CATEGORY_OPTIONS: { value: string; label: string }[] = [
+  { value: 'all', label: 'All Categories' },
+  { value: 'international', label: 'International' },
+  { value: 'national', label: 'National' },
+  { value: 'business', label: 'Business' },
+  { value: 'sports', label: 'Sports' },
+  { value: 'tech', label: 'Technology' },
+  { value: 'environment', label: 'Environment' },
+  { value: 'crime', label: 'Crime' },
+];
+
 export default function AgentCard({ agent, isRunning, onStartRun, onStopRun, runStatus, currentStep }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [category, setCategory] = useState<string>('all');
 
   const handleStart = async () => {
     if (busy) return;
     setBusy(true);
     setError('');
     try {
-      await onStartRun();
+      await onStartRun(category);
     } catch (e: any) {
       setError(e.message || 'Failed');
     } finally {
@@ -79,6 +91,36 @@ export default function AgentCard({ agent, isRunning, onStartRun, onStopRun, run
           </div>
         )}
       </div>
+
+      {!isRunning && (
+        <div style={{ marginBottom: 10 }}>
+          <label
+            htmlFor={`cat-${agent.id}`}
+            style={{ display: 'block', fontSize: 12, color: '#9ca3af', marginBottom: 6 }}
+          >
+            News Category
+          </label>
+          <select
+            id={`cat-${agent.id}`}
+            value={category}
+            onChange={(e) => setCategory(e.target.value)}
+            disabled={busy || !agent.enabled}
+            style={{
+              width: '100%',
+              padding: '8px 10px',
+              borderRadius: 8,
+              background: '#0f172a',
+              color: '#e5e7eb',
+              border: '1px solid #1f2937',
+              fontSize: 14,
+            }}
+          >
+            {CATEGORY_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+        </div>
+      )}
 
       <div style={{ display: 'flex', gap: 8 }}>
         {!isRunning ? (

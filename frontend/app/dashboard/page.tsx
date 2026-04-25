@@ -240,7 +240,7 @@ export default function DashboardPage() {
   }, [activeRunId]);
 
   // ─── Handlers ─────────────────────────────────
-  const startRun = useCallback(async (agentId: string) => {
+  const startRun = useCallback(async (agentId: string, category: string = 'all') => {
     const session = (await supabase.auth.getSession()).data.session;
     if (!session) throw new Error('Please sign in again.');
 
@@ -255,6 +255,7 @@ export default function DashboardPage() {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${session.access_token}`,
       },
+      body: JSON.stringify({ category }),
     });
     const data = await res.json();
     if (!res.ok) {
@@ -373,7 +374,7 @@ export default function DashboardPage() {
             isRunning={isRunning}
             runStatus={run?.status}
             currentStep={run?.current_step || undefined}
-            onStartRun={() => startRun(agent.id)}
+            onStartRun={(category: string) => startRun(agent.id, category)}
             onStopRun={stopRun}
           />
         ))}

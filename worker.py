@@ -102,7 +102,7 @@ def _claim_run() -> Optional[Dict[str, Any]]:
     try:
         result = (
             sb.table("agent_runs")
-            .select("id, agent_id, created_by")
+            .select("id, agent_id, created_by, category")
             .eq("status", "queued")
             .order("created_at", desc=False)
             .limit(1)
@@ -269,11 +269,20 @@ def _execute_run_supervised(run: Dict[str, Any]) -> None:
     run_id = run["id"]
     agent_id = run["agent_id"]
     user_id = run["created_by"]
+    category = str(run.get("category") or "").strip().lower()
     run_short = run_id[:8]
+
+    child_env = os.environ.copy()
+    if category and category != "all":
+        child_env["RUN_CATEGORY_FILTER"] = category
+        print(f"  Category filter: {category}")
+    else:
+        child_env.pop("RUN_CATEGORY_FILTER", None)
 
     proc = subprocess.Popen(
         [sys.executable, __file__, "--run-claimed", run_id, agent_id, user_id],
         cwd=os.path.dirname(os.path.abspath(__file__)),
+        env=child_env,
     )
 
     while proc.poll() is None:

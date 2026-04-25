@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 import re
 from contextlib import suppress
@@ -105,12 +106,23 @@ class HardenedOrchestrator:
 
         self.publish_plan = self._normalize_publish_plan(self.settings.category_publish_plan)
 
+        # Per-run category filter (set via RUN_CATEGORY_FILTER env var by worker)
+        category_filter = (os.getenv("RUN_CATEGORY_FILTER") or "").strip().lower()
+        if category_filter and category_filter not in {"all", ""}:
+            filtered = [step for step in self.publish_plan if str(step["category"]).lower() == category_filter]
+            if filtered:
+                self.publish_plan = filtered
+                self.logger.info(f"run.category_filter applied={category_filter} steps={len(filtered)}")
+            else:
+                self.logger.warning(f"run.category_filter unknown={category_filter} — using full plan")
+
         self.max_publish_retries = 2
         self.max_login_retries = 2
         self.max_consecutive_publish_failures = 10
 
         # Fuzzy title dedup: track all titles published in this run
         self._published_titles: List[str] = []
+        self._published_image_refs: set[str] = set()
 
         # Worker integration hooks
         self._cancel_check = None
@@ -264,7 +276,7 @@ class HardenedOrchestrator:
         consecutive_publish_failures = 0
         stop_run = False
         published_story_keys: set[str] = set()
-        max_articles_per_run = max(0, int(getattr(self.settings, "max_articles", 0)))
+        max_articles_per_run = self._max_articles_per_run()
 
         for step in self.publish_plan:
             if self._is_cancelled():
@@ -397,7 +409,7 @@ class HardenedOrchestrator:
                         self.logger.info(f"skip.low_signal url={article_url} category={category}")
                         continue
 
-                    ok, fail_reason = await self._publish_article(article, selected_is_breaking, metrics)
+                    ok, fail_reason, published_image_ref, published_summary_title = await self._publish_article(article, selected_is_breaking, metrics)
                     if ok:
                         cat_published += 1
                         published += 1
@@ -405,27 +417,22 @@ class HardenedOrchestrator:
                             cat_breaking_published += 1
                         consecutive_publish_failures = 0
                         self.memory.mark_success(article_url)
+                        # Use AI-summarized title for cross-run dedup (matches what next run will generate)
+                        dedup_title = (published_summary_title or "").strip() or getattr(cluster, "canonical_title", "")
                         if cluster_story_key:
                             published_story_keys.add(cluster_story_key)
                             self.memory.mark_story_success(
                                 cluster_story_key,
                                 article_url,
-                                getattr(cluster, "canonical_title", ""),
+                                dedup_title,
                             )
                         # Persist to Supabase so future runs on any worker skip this article
                         self.memory.mark_published_in_supabase(
                             article_url,
-                            title=getattr(cluster, "canonical_title", ""),
+                            title=dedup_title,
                             story_key=cluster_story_key or "",
-                            image_url=str(getattr(article, "og_image", "") or getattr(article, "main_image", "") or "").strip(),
+                            image_url=published_image_ref,
                         )
-                        # Track the published title for fuzzy dedup within this run
-                        published_title = getattr(cluster, "canonical_title", "") or getattr(article, "title", "") or ""
-                        if published_title:
-                            self._published_titles.append(published_title.strip())
-                        article_title = str(getattr(article, "title", "") or "").strip()
-                        if article_title and article_title != published_title:
-                            self._published_titles.append(article_title)
                         published_from_cluster = True
                         break
 
@@ -482,6 +489,20 @@ class HardenedOrchestrator:
 
     def _pick_representative(self, articles: List[object]):
         return max(articles, key=lambda a: len(getattr(a, "body", "") or ""), default=None)
+
+    def _planned_articles_per_run(self) -> int:
+        total = 0
+        for step in self.publish_plan:
+            try:
+                total += max(0, int(step.get("total", 0)))
+            except Exception:
+                continue
+        return total
+
+    def _max_articles_per_run(self) -> int:
+        configured = max(0, int(getattr(self.settings, "max_articles", 0)))
+        planned = self._planned_articles_per_run()
+        return max(configured, planned)
 
     def _effective_publish_targets(
         self,
@@ -906,9 +927,21 @@ class HardenedOrchestrator:
 
             return url
         return None
-    async def _publish_article(self, article, is_breaking: bool, metrics: PipelineMetrics) -> Tuple[bool, str]:
+    def _build_image_ref(self, local_image_path: Optional[str], selected_image_url: str = "") -> str:
+        selected = (selected_image_url or "").strip()
+        if selected:
+            return selected
+        if local_image_path and os.path.exists(local_image_path):
+            try:
+                with open(local_image_path, "rb") as fh:
+                    return f"sha1:{hashlib.sha1(fh.read()).hexdigest()}"
+            except Exception:
+                return ""
+        return ""
+
+    async def _publish_article(self, article, is_breaking: bool, metrics: PipelineMetrics) -> Tuple[bool, str, str, str]:
         if self._is_cancelled():
-            return False, "cancelled"
+            return False, "cancelled", "", ""
 
         if getattr(article, "category", "") == "sports":
             is_breaking = False
@@ -917,21 +950,16 @@ class HardenedOrchestrator:
         summary = self.summarizer.summarize(article.title, article.body, max_retries=(2 if is_breaking else 3))
         await self._emit_event("STEP_DONE", {"step": "summarize", "url": article.url, "ok": bool(summary)})
         if self._is_cancelled():
-            return False, "cancelled"
+            return False, "cancelled", "", ""
         if not summary:
-            return False, "summary_failed"
+            return False, "summary_failed", "", ""
 
-        # Fuzzy title dedup: skip if we already published a very similar title this run
         if self._is_title_similar(article.title):
-            self.logger.info(
-                f"skip.duplicate_source_title title={article.title[:60]} url={article.url}"
-            )
-            return False, "duplicate_title"
+            self.logger.info(f"skip.duplicate_source_title title={article.title[:60]} url={article.url}")
+            return False, "duplicate_title", "", ""
         if self._is_title_similar(summary["title"]):
-            self.logger.info(
-                f"skip.duplicate_title title={summary['title'][:60]} url={article.url}"
-            )
-            return False, "duplicate_title"
+            self.logger.info(f"skip.duplicate_title title={summary['title'][:60]} url={article.url}")
+            return False, "duplicate_title", "", ""
 
         category = self._decide_cms_category(article, summary["title"], summary["body"])
         image_search_query = self._build_image_query(article, summary["title"], category)
@@ -945,44 +973,28 @@ class HardenedOrchestrator:
         )
         await self._emit_event("STEP_DONE", {"step": "image", "url": article.url, "ok": image_result.passed})
         if self._is_cancelled():
-            return False, "cancelled"
+            return False, "cancelled", "", ""
 
-        metrics.record_image_result(image_result.passed, image_result.rejection_reasons[0] if image_result.rejection_reasons else "")
-
-        # ── Image resolution: 2-tier fallback chain ───────────────────────────────
-        # Tier 1: image pipeline found and downloaded a vetted local image
-        local_image_path = image_result.local_path if (image_result.local_path and os.path.exists(image_result.local_path)) else None
-
-        # Tier 2: pipeline failed → use the article's own og_image / main_image URL directly
-        # NOTE: Tier 3 (Google Image Search) is intentionally DISABLED — it returns random
-        # unrelated images (e.g. market people for an oil crisis article). Skip instead.
-        fallback_image_url: Optional[str] = None
-        if not local_image_path:
-            fallback_image_url = self._select_fallback_image_url(article)
-            if fallback_image_url:
-                self.logger.info(f"image.tier2_fallback url={fallback_image_url[:80]} article={article.url}")
-            else:
-                self.logger.warning(
-                    f"image.no_image_available — skipping article to avoid wrong image. "
-                    f"url={article.url} reasons={image_result.rejection_reasons}"
-                )
-                return False, "image_missing"
-
-        # Image dedup: skip if this exact image URL was already published
-        _image_source_url = (
-            str(getattr(image_result, "source_url", "") or "").strip()
-            or str(getattr(article, "og_image", "") or getattr(article, "main_image", "") or "").strip()
+        metrics.record_image_result(
+            image_result.passed,
+            image_result.rejection_reasons[0] if image_result.rejection_reasons else "",
         )
-        if _image_source_url and self.memory.is_image_used_in_supabase(_image_source_url):
-            self.logger.info(f"skip.duplicate_image image_url={_image_source_url[:80]} url={article.url}")
-            return False, "duplicate_image"
+
+        local_image_path = image_result.local_path if (image_result.local_path and os.path.exists(image_result.local_path)) else None
+        selected_image_url = str(getattr(image_result, "selected_url", "") or "").strip()
+        image_ref = self._build_image_ref(local_image_path, selected_image_url)
+        if image_ref:
+            if image_ref in self._published_image_refs:
+                self.logger.info(f"skip.duplicate_image image_ref={image_ref[:80]} url={article.url}")
+                return False, "duplicate_image", "", ""
+            if self.memory.is_image_used_in_supabase(image_ref):
+                self.logger.info(f"skip.duplicate_image image_ref={image_ref[:80]} url={article.url}")
+                return False, "duplicate_image", "", ""
 
         hashtag = self._build_hashtags(category=category, title=summary["title"], is_breaking=is_breaking)
-        self.logger.info(f"publish.meta category={category} hashtag={hashtag} image_tier={'local' if local_image_path else 'fallback_url' if fallback_image_url else 'search'}")
+        self.logger.info(f"publish.meta category={category} hashtag={hashtag} image_tier={'local' if local_image_path else 'search'}")
 
-        # Allow missing image only when we have a fallback strategy (URL or search)
-        allow_missing = (local_image_path is None)
-
+        allow_missing = local_image_path is None
         validation = self.validator.validate(
             english_title=summary["title"],
             english_body=summary["body"],
@@ -994,7 +1006,7 @@ class HardenedOrchestrator:
         )
         if not validation.is_valid:
             self.logger.warning(f"Validation failed for article: {validation.error_message}")
-            return False, "validation_failed"
+            return False, "validation_failed", "", ""
 
         data = ArticleData(
             english_title=summary["title"],
@@ -1002,12 +1014,13 @@ class HardenedOrchestrator:
             category=category,
             hashtag=hashtag,
             image_path=local_image_path,
-            image_search_query="",
+            image_search_query=image_search_query if not local_image_path else "",
             needs_image=(local_image_path is None),
-            image_url=fallback_image_url,
+            image_url=None,
             image_metadata={
                 "quality": image_result.metadata,
                 "rejection_reasons": image_result.rejection_reasons,
+                "selected_url": selected_image_url,
             },
         )
 
@@ -1015,15 +1028,18 @@ class HardenedOrchestrator:
         workflow_ok = await self._execute_browser_workflow(data, article.url)
         await self._emit_event("STEP_DONE", {"step": "publish", "url": article.url, "ok": bool(workflow_ok)})
         if self._is_cancelled():
-            return False, "cancelled"
+            return False, "cancelled", "", ""
         if workflow_ok:
-            # Track the summarized title for fuzzy dedup within this run
-            self._published_titles.append(summary["title"].strip())
+            summary_title = summary["title"].strip()
+            self._published_titles.append(summary_title)
             source_title = str(getattr(article, "title", "") or "").strip()
-            if source_title and source_title != summary["title"].strip():
+            if source_title and source_title != summary_title:
                 self._published_titles.append(source_title)
-            return True, ""
-        return False, "workflow_failed"
+            final_image_ref = self._build_image_ref(data.image_path, selected_image_url)
+            if final_image_ref:
+                self._published_image_refs.add(final_image_ref)
+            return True, "", final_image_ref, summary_title
+        return False, "workflow_failed", "", ""
 
     async def _recover_browser_session(self) -> bool:
         if not await self.publisher.ensure_live_page():
