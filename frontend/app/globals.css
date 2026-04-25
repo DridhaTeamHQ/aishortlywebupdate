@@ -567,7 +567,11 @@ label {
    ═══════════════════════════════════════════ */
 .agent-card {
   position: relative;
-  overflow: hidden;
+  overflow: visible;
+}
+.agent-card::before {
+  border-top-left-radius: var(--radius);
+  border-top-right-radius: var(--radius);
 }
 .agent-card::before {
   content: '';
@@ -862,7 +866,7 @@ label {
   top: calc(100% + 6px);
   left: 0;
   right: 0;
-  z-index: 30;
+  z-index: 100;
   list-style: none;
   margin: 0;
   padding: 6px;
