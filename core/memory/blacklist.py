@@ -138,6 +138,30 @@ class AgentMemory:
             self.logger.warning(f"Supabase image dedup check failed: {exc}")
             return False
 
+    def get_recent_published_records(self, within_hours: int = 48) -> List[dict]:
+        """Fetch (title, story_key) pairs from Supabase for cross-run topic dedup."""
+        if not self._sb:
+            return []
+        try:
+            cutoff = (datetime.now(timezone.utc) - timedelta(hours=within_hours)).isoformat()
+            result = (
+                self._sb.table(self._SUPABASE_TABLE)
+                .select("title, story_key")
+                .gte("published_at", cutoff)
+                .limit(300)
+                .execute()
+            )
+            out: List[dict] = []
+            for row in (result.data or []):
+                title = (row.get("title") or "").strip()
+                story_key = (row.get("story_key") or "").strip()
+                if title or story_key:
+                    out.append({"title": title, "story_key": story_key})
+            return out
+        except Exception as exc:
+            self.logger.warning(f"Supabase records fetch failed: {exc}")
+            return []
+
     def get_recent_published_titles(self, within_hours: int = 48) -> List[str]:
         """Fetch titles of recently published articles from Supabase for cross-run dedup."""
         if not self._sb:

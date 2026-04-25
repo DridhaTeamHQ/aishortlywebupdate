@@ -25,8 +25,7 @@ PIPELINE_TO_CMS_CATEGORY = {
     "tech": "Technology",
     "international": "International",
     "national": "National",
-    "environment": "Environment",
-    "crime": "Crime",
+    "politics": "Politics",
     "sports": "Sports",
 }
 
@@ -199,18 +198,33 @@ class HardenedOrchestrator:
     async def _run_once(self) -> None:
         metrics = PipelineMetrics()
 
-        # ── Cross-run intelligence: preload recently published titles from Supabase ──
+        # ── Cross-run intelligence: preload titles + story_keys from Supabase ──
+        self._preloaded_story_keys: set[str] = getattr(self, "_preloaded_story_keys", set())
         try:
-            supabase_titles = self.memory.get_recent_published_titles(within_hours=48)
-            if supabase_titles:
-                # Merge into _published_titles so _is_title_similar covers cross-run dupes
+            records = self.memory.get_recent_published_records(within_hours=48)
+            if records:
                 existing = set(self._published_titles)
-                for t in supabase_titles:
-                    if t not in existing:
-                        self._published_titles.append(t)
-                self.logger.info(f"dedup.preloaded {len(supabase_titles)} titles from Supabase for cross-run dedup")
+                for rec in records:
+                    title = (rec.get("title") or "").strip()
+                    sk = (rec.get("story_key") or "").strip()
+                    if title and title not in existing:
+                        self._published_titles.append(title)
+                        existing.add(title)
+                    if sk:
+                        self._preloaded_story_keys.add(sk)
+                self.logger.info(
+                    f"dedup.preloaded titles={len(self._published_titles)} story_keys={len(self._preloaded_story_keys)} from Supabase"
+                )
+            else:
+                # Fallback to titles-only fetch if records query failed silently
+                supabase_titles = self.memory.get_recent_published_titles(within_hours=48)
+                if supabase_titles:
+                    existing = set(self._published_titles)
+                    for t in supabase_titles:
+                        if t not in existing:
+                            self._published_titles.append(t)
         except Exception as exc:
-            self.logger.warning(f"Cross-run title preload failed (non-fatal): {exc}")
+            self.logger.warning(f"Cross-run preload failed (non-fatal): {exc}")
 
         if self._is_cancelled():
             return
@@ -302,7 +316,7 @@ class HardenedOrchestrator:
         published = 0
         consecutive_publish_failures = 0
         stop_run = False
-        published_story_keys: set[str] = set()
+        published_story_keys: set[str] = set(getattr(self, "_preloaded_story_keys", set()) or set())
         max_articles_per_run = self._max_articles_per_run()
 
         for step in self.publish_plan:
@@ -685,10 +699,27 @@ class HardenedOrchestrator:
             else:
                 entity_sim = 0.0
 
+            shared_entities = len(new_entities & pub_entities) if new_entities and pub_entities else 0
+
+            # Strong-entity short-circuit: 2+ shared proper nouns + meaningful overlap → same story
+            if shared_entities >= 2 and entity_sim >= 0.50 and word_sim >= 0.25:
+                self.logger.info(
+                    f"dedup.entity_match shared={shared_entities} entity_sim={entity_sim:.2f} word_sim={word_sim:.2f} "
+                    f"new={new_title[:50]} vs existing={published_title[:50]}"
+                )
+                return True
+
+            # Heavy stem overlap alone (e.g. paraphrased headlines without shared proper nouns)
+            if word_sim >= 0.62:
+                self.logger.info(
+                    f"dedup.stem_match word_sim={word_sim:.2f} new={new_title[:50]} vs existing={published_title[:50]}"
+                )
+                return True
+
             # Combined score: entities weigh 2× more than common words
             combined = (word_sim * 0.4) + (entity_sim * 0.6) if entity_sim > 0 else word_sim
 
-            if combined >= 0.60:
+            if combined >= 0.50:
                 self.logger.info(
                     f"dedup.title_match score={combined:.2f} word_sim={word_sim:.2f} entity_sim={entity_sim:.2f} "
                     f"new={new_title[:50]} vs existing={published_title[:50]}"

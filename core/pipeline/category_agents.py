@@ -38,6 +38,7 @@ SCRAPER_REGISTRY: Dict[str, Callable[[], Any]] = {
 CATEGORY_KEYWORDS: Dict[CategoryName, List[str]] = {
     "business": [
         "economy", "market", "stock", "business", "company", "trade", "finance", "inflation", "gdp",
+        "investor", "earnings", "revenue", "ipo", "fund", "bank", "rupee", "dollar", "shares",
     ],
     "tech": [
         "technology", "tech", "ai", "artificial intelligence", "software", "chip", "startup", "internet", "cyber", "semiconductor",
@@ -49,11 +50,11 @@ CATEGORY_KEYWORDS: Dict[CategoryName, List[str]] = {
     "national": [
         "india", "indian", "new delhi", "ministry", "government of india",
     ],
-    "environment": [
-        "climate", "environment", "pollution", "wildlife", "forest", "emission", "biodiversity", "ecology", "conservation", "habitat", "nature",
-    ],
-    "crime": [
-        "crime", "police", "murder", "arrest", "fraud", "court", "investigation", "assault",
+    "politics": [
+        "election", "elections", "parliament", "lok sabha", "rajya sabha", "minister", "cabinet", "modi",
+        "rahul gandhi", "amit shah", "congress", "bjp", "aap", "opposition", "coalition", "governor",
+        "chief minister", "assembly", "vote", "poll", "polls", "constituency", "campaign", "manifesto",
+        "alliance", "party", "leader", "speaker", "bypoll", "ec", "election commission",
     ],
     "sports": [
         "sport", "sports", "match", "tournament", "league", "cup", "goal", "coach", "player", "cricket", "football", "tennis",
@@ -61,12 +62,11 @@ CATEGORY_KEYWORDS: Dict[CategoryName, List[str]] = {
 }
 
 CATEGORY_SOURCE_HINTS: Dict[CategoryName, List[str]] = {
-    "business": ["/business", "markets", "economy", "finance"],
+    "business": ["/business", "markets", "economy", "finance", "/markets", "moneycontrol"],
     "tech": ["/technology", "/tech", "science"],
     "international": ["/world", "world-news", "international", "middle-east", "europe", "asia", "africa"],
     "national": ["/india", "/news/national", "nation"],
-    "environment": ["environment", "climate", "sustainability"],
-    "crime": ["crime", "police", "law-order", "courts"],
+    "politics": ["/politics", "political-pulse", "/elections", "/election", "lok-sabha", "rajya-sabha"],
     "sports": ["/sport", "/sports", "cricket", "football", "tennis", "olympic"],
 }
 
@@ -378,22 +378,21 @@ class CategoryAgent:
                 return True
             return any(self._has_keyword(content_text, kw) for kw in CATEGORY_KEYWORDS["national"])
 
-        if self.category == "environment":
-            signal = self._category_signal_score(content_text, "environment")
-            return (self._source_url_matches_category(source_url_low, "environment") and signal > 0) or any(
-                self._has_keyword(content_text, kw) for kw in CATEGORY_KEYWORDS["environment"]
+        if self.category == "politics":
+            signal = self._category_signal_score(content_text, "politics")
+            return (self._source_url_matches_category(source_url_low, "politics") and signal > 0) or signal >= 2 or any(
+                self._has_keyword(content_text, kw)
+                for kw in (
+                    "election", "elections", "parliament", "lok sabha", "rajya sabha", "cabinet",
+                    "modi", "rahul gandhi", "amit shah", "bjp", "congress", "opposition",
+                    "chief minister", "assembly", "vote", "poll", "election commission",
+                )
             )
 
         if self.category == "sports":
             signal = self._category_signal_score(content_text, "sports")
             return (self._source_url_matches_category(source_url_low, "sports") and signal > 0) or any(
                 self._has_keyword(content_text, kw) for kw in CATEGORY_KEYWORDS["sports"]
-            )
-
-        if self.category == "crime":
-            signal = self._category_signal_score(content_text, "crime")
-            return (self._source_url_matches_category(source_url_low, "crime") and signal > 0) or any(
-                self._has_keyword(content_text, kw) for kw in CATEGORY_KEYWORDS["crime"]
             )
 
         if self.category == "tech":

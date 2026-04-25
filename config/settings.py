@@ -107,22 +107,14 @@ DEFAULT_CATEGORY_SOURCES: Dict[str, List[Dict[str, str]]] = {
         {"name": "Indian Express", "scraper": "thehindu", "url": "https://indianexpress.com/section/india/"},
         {"name": "News18", "scraper": "thehindu", "url": "https://www.news18.com/india/"},
     ],
-    "environment": [
-        {"name": "Reuters", "scraper": "reuters", "url": "https://www.reuters.com/business/environment/"},
-        {"name": "India Today", "scraper": "indiatoday", "url": "https://www.indiatoday.in/environment"},
-        {"name": "TOI", "scraper": "toi", "url": "https://timesofindia.indiatimes.com/india"},
-        {"name": "AlJazeera", "scraper": "aljazeera", "url": "https://www.aljazeera.com/climate-crisis"},
-        {"name": "The Hindu", "scraper": "thehindu", "url": "https://www.thehindu.com/sci-tech/energy-and-environment/"},
-        {"name": "Down To Earth", "scraper": "thehindu", "url": "https://www.downtoearth.org.in/news"},
-        {"name": "Mongabay", "scraper": "thehindu", "url": "https://india.mongabay.com/"},
-    ],
-    "crime": [
-        {"name": "The Hindu", "scraper": "thehindu", "url": "https://www.thehindu.com/news/national/"},
-        {"name": "TOI Crime", "scraper": "toi", "url": "https://timesofindia.indiatimes.com/city"},
-        {"name": "India Today", "scraper": "indiatoday", "url": "https://www.indiatoday.in/crime"},
-        {"name": "NDTV", "scraper": "ndtv", "url": "https://www.ndtv.com/india"},
-        {"name": "Hindustan Times", "scraper": "thehindu", "url": "https://www.hindustantimes.com/india-news"},
-        {"name": "Indian Express Crime", "scraper": "thehindu", "url": "https://indianexpress.com/section/india/"},
+    "politics": [
+        {"name": "The Hindu Politics", "scraper": "thehindu", "url": "https://www.thehindu.com/news/national/"},
+        {"name": "TOI Politics", "scraper": "toi", "url": "https://timesofindia.indiatimes.com/india"},
+        {"name": "India Today Politics", "scraper": "indiatoday", "url": "https://www.indiatoday.in/india"},
+        {"name": "NDTV Politics", "scraper": "ndtv", "url": "https://www.ndtv.com/india"},
+        {"name": "Hindustan Times Politics", "scraper": "thehindu", "url": "https://www.hindustantimes.com/india-news"},
+        {"name": "Indian Express Politics", "scraper": "thehindu", "url": "https://indianexpress.com/section/political-pulse/"},
+        {"name": "News18 Politics", "scraper": "thehindu", "url": "https://www.news18.com/politics/"},
     ],
     "sports": [
         {"name": "TOI", "scraper": "toi", "url": "https://timesofindia.indiatimes.com/sports"},
@@ -192,11 +184,10 @@ DEFAULT_IMAGE_THRESHOLDS = {
 DEFAULT_CATEGORY_PUBLISH_PLAN: List[Dict[str, Any]] = [
     {"category": "international", "total": 5, "breaking_target": 3},
     {"category": "national", "total": 5, "breaking_target": 3},
+    {"category": "politics", "total": 5, "breaking_target": 3},
     {"category": "business", "total": 5, "breaking_target": 3},
-    {"category": "sports", "total": 5, "breaking_target": 0},
     {"category": "tech", "total": 5, "breaking_target": 3},
-    {"category": "environment", "total": 5, "breaking_target": 3},
-    {"category": "crime", "total": 5, "breaking_target": 3},
+    {"category": "sports", "total": 5, "breaking_target": 0},
 ]
 
 

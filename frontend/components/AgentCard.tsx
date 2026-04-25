@@ -23,11 +23,10 @@ const CATEGORY_OPTIONS: { value: string; label: string }[] = [
   { value: 'all', label: 'All Categories' },
   { value: 'international', label: 'International' },
   { value: 'national', label: 'National' },
-  { value: 'business', label: 'Business' },
-  { value: 'sports', label: 'Sports' },
+  { value: 'politics', label: 'Politics' },
+  { value: 'business', label: 'Finance & Business' },
   { value: 'tech', label: 'Technology' },
-  { value: 'environment', label: 'Environment' },
-  { value: 'crime', label: 'Crime' },
+  { value: 'sports', label: 'Sports' },
 ];
 
 export default function AgentCard({ agent, isRunning, onStartRun, onStopRun, runStatus, currentStep }: Props) {

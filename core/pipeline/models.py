@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Literal, Optional
 
 
-CategoryName = Literal["business", "tech", "international", "national", "environment", "crime", "sports"]
+CategoryName = Literal["business", "tech", "international", "national", "politics", "sports"]
 
 
 def utcnow() -> datetime:

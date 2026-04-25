@@ -94,14 +94,24 @@ export async function POST(
     const sb = getServiceClient();
     const agentId = params.agentId;
 
-    const ALLOWED_CATEGORIES = new Set([
-      'all', 'international', 'national', 'business', 'sports', 'tech', 'environment', 'crime',
-    ]);
+    // Map frontend labels → internal pipeline keys
+    const CATEGORY_ALIASES: Record<string, string> = {
+      all: 'all',
+      international: 'international',
+      national: 'national',
+      politics: 'politics',
+      sports: 'sports',
+      tech: 'tech',
+      technology: 'tech',
+      business: 'business',
+      finance: 'business',
+      'finance & business': 'business',
+    };
     let category = 'all';
     try {
       const body = await request.json();
       const raw = String(body?.category || '').trim().toLowerCase();
-      if (ALLOWED_CATEGORIES.has(raw)) category = raw;
+      if (raw in CATEGORY_ALIASES) category = CATEGORY_ALIASES[raw];
     } catch {
       // No body or invalid JSON — default to 'all'
     }
