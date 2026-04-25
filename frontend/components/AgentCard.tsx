@@ -20,13 +20,13 @@ type Props = {
 };
 
 const CATEGORY_OPTIONS: { value: string; label: string }[] = [
-  { value: 'all', label: 'All Categories' },
-  { value: 'international', label: 'International' },
-  { value: 'national', label: 'National' },
-  { value: 'politics', label: 'Politics' },
-  { value: 'business', label: 'Finance & Business' },
-  { value: 'tech', label: 'Technology' },
-  { value: 'sports', label: 'Sports' },
+  { value: 'all', label: '🗞️  All Categories' },
+  { value: 'international', label: '🌍  International' },
+  { value: 'national', label: '🇮🇳  National' },
+  { value: 'politics', label: '🏛️  Politics' },
+  { value: 'business', label: '💹  Finance & Business' },
+  { value: 'tech', label: '💻  Technology' },
+  { value: 'sports', label: '🏆  Sports' },
 ];
 
 export default function AgentCard({ agent, isRunning, onStartRun, onStopRun, runStatus, currentStep }: Props) {
@@ -101,18 +101,10 @@ export default function AgentCard({ agent, isRunning, onStartRun, onStopRun, run
           </label>
           <select
             id={`cat-${agent.id}`}
+            className="category-select"
             value={category}
             onChange={(e) => setCategory(e.target.value)}
             disabled={busy || !agent.enabled}
-            style={{
-              width: '100%',
-              padding: '8px 10px',
-              borderRadius: 8,
-              background: '#0f172a',
-              color: '#e5e7eb',
-              border: '1px solid #1f2937',
-              fontSize: 14,
-            }}
           >
             {CATEGORY_OPTIONS.map((opt) => (
               <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -128,7 +120,7 @@ export default function AgentCard({ agent, isRunning, onStartRun, onStopRun, run
             onClick={handleStart}
             disabled={busy || !agent.enabled}
           >
-            {busy ? <><div className="spinner" /> Starting...</> : 'Start Agent'}
+            {busy ? <><div className="spinner" /> Starting…</> : <>▶  Start Agent</>}
           </button>
         ) : (
           <button
@@ -136,7 +128,7 @@ export default function AgentCard({ agent, isRunning, onStartRun, onStopRun, run
             onClick={handleStop}
             disabled={busy || runStatus === 'stopping'}
           >
-            {busy || runStatus === 'stopping' ? <><div className="spinner" /> Stopping...</> : 'Stop Agent'}
+            {busy || runStatus === 'stopping' ? <><div className="spinner" /> Stopping…</> : <>■  Stop Agent</>}
           </button>
         )}
       </div>

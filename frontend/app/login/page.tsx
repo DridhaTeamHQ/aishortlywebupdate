@@ -42,6 +42,7 @@ export default function LoginPage() {
 
   return (
     <div className="login-page">
+      <div className="aurora" aria-hidden><span /></div>
       <form onSubmit={onSubmit} className="card card-glow login-card">
         <div className="login-header">
           <div className="login-logo">⚡</div>

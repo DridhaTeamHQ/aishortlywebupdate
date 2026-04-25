@@ -347,6 +347,7 @@ export default function DashboardPage() {
 
   return (
     <main className="page-wrap">
+      <div className="aurora" aria-hidden><span /></div>
       {/* ─── Navbar ─── */}
       <nav className="navbar">
         <div className="navbar-brand">
