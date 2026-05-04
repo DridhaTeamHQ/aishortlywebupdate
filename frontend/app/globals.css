@@ -917,5 +917,28 @@ label {
   h1 { font-size: 22px; }
   .grid-2 { grid-template-columns: 1fr; }
   .run-stats { flex-wrap: wrap; gap: 16px; }
-  .navbar { flex-direction: column; gap: 12px; align-items: flex-start; }
+  .navbar {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .navbar-actions { gap: 8px; }
+  .navbar-actions .text-muted {
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11px;
+  }
+}
+@media (max-width: 480px) {
+  .page-wrap { padding: 12px; }
+  .card { padding: 16px; }
+  .agent-meta { flex-wrap: wrap; gap: 8px; }
+  .run-stats { gap: 12px; }
+  .run-stat-value { font-size: 20px; }
+  .navbar-actions .text-muted { display: none; }
+  .log-time { display: none; }
 }
