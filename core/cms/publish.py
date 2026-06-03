@@ -445,12 +445,31 @@ class CMSPublisher:
             await asyncio.sleep(0.2)
         return False
 
+    async def _wait_for_form_open(self, timeout_s: float = 6.0) -> bool:
+        """Poll until the Create Article modal is genuinely open (title field present)."""
+        if self.page is None:
+            return False
+        steps = max(1, int(timeout_s / 0.3))
+        for _ in range(steps):
+            if await self._is_article_form_open():
+                # Double-confirm the editable title field is actually there — the
+                # modal can be mid-open/mid-close when only text is detectable.
+                field = await self._find_english_title_field()
+                if field is not None:
+                    return True
+            await asyncio.sleep(0.3)
+        return False
+
     async def _open_create_article_modal(self) -> bool:
         if self.page is None:
             return False
 
-        if await self._is_article_form_open():
+        # Already open?
+        if await self._wait_for_form_open(0.6):
             return True
+
+        # Clear any leftover popovers/menus from the previous article's flow.
+        await self._dismiss_transient_overlays()
 
         create_candidates = [
             self.page.get_by_role("button", name=re.compile(r"create article", re.I)).first,
@@ -463,11 +482,13 @@ class CMSPublisher:
                 "xpath=ancestor-or-self::*[self::button or self::a or @role='button'][1]"
             ),
         ]
-        for candidate in create_candidates:
-            if await self._click_locator(candidate, "Create Article button"):
-                await self._wait_stable()
-                if await self._is_article_form_open():
-                    return True
+        # Try a couple of passes — the list page can still be settling after a publish.
+        for _attempt in range(2):
+            for candidate in create_candidates:
+                if await self._click_locator(candidate, "Create Article button"):
+                    if await self._wait_for_form_open(6.0):
+                        return True
+            await asyncio.sleep(0.6)
         return False
 
     async def login(self) -> bool:
@@ -1036,7 +1057,11 @@ class CMSPublisher:
                 bool(data.image_search_query),
             )
             if not await self._is_article_form_open():
-                return self._fail("form_not_open")
+                # The modal may have closed/re-rendered between create and fill —
+                # try to reopen it once before giving up.
+                self.logger.warning("Form not open at fill start — attempting reopen")
+                if not await self._open_create_article_modal():
+                    return self._fail("form_not_open")
 
             title_field = await self._find_english_title_field()
             body_field = await self._find_english_body_field()
@@ -1340,8 +1365,9 @@ class CMSPublisher:
             await btn.click(force=True)
 
             if await self._wait_publish_success():
-                # Let CMS React state fully settle before the next article opens the modal
-                await asyncio.sleep(1.5)
+                # Make sure the submit modal has fully closed and the Create Article
+                # entry point is ready before the next article tries to open it.
+                await self._settle_after_publish()
                 self.last_error = ""
                 return True
 
@@ -1351,6 +1377,26 @@ class CMSPublisher:
             self.logger.error(f"Publish failed: {exc}")
             await self._dump_debug("publish_exception")
             return self._fail(f"publish_exception:{type(exc).__name__}")
+
+    async def _settle_after_publish(self) -> None:
+        """Wait for the publish modal to close and the Create Article button to reappear."""
+        if self.page is None:
+            return
+        await self._dismiss_transient_overlays()
+        for _ in range(15):
+            await asyncio.sleep(0.4)
+            try:
+                if await self._is_article_form_open():
+                    continue
+                create_btn = self.page.get_by_role(
+                    "button", name=re.compile(r"create article", re.I)
+                ).first
+                if await create_btn.count() > 0 and await create_btn.is_visible(timeout=300):
+                    await asyncio.sleep(0.4)
+                    return
+            except Exception:
+                pass
+        await asyncio.sleep(0.6)
 
     async def verify_publish(self) -> bool:
         return await self._wait_publish_success()
