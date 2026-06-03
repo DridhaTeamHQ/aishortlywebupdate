@@ -68,9 +68,16 @@ class CMSPublisher:
         self.page: Optional[Page] = None
         self.image_finder: Optional[GoogleImageFinder] = None
         self.logged_in = False
+        self.last_error = ""
 
         self.SCREENSHOT_DIR.mkdir(exist_ok=True)
         self.DEBUG_DIR.mkdir(parents=True, exist_ok=True)
+
+    def _fail(self, reason: str) -> bool:
+        """Record a precise failure reason (surfaced in Live Activity) and return False."""
+        self.last_error = reason
+        self.logger.error(f"publish.fail reason={reason}")
+        return False
 
     def _launch_kwargs(self) -> Dict[str, Any]:
         headless = self.settings.headless
@@ -581,8 +588,7 @@ class CMSPublisher:
             elif not await self.ensure_live_page():
                 return False
 
-        self.logger.error("Navigation error: unable to reach Create Article form")
-        return False
+        return self._fail("create_article_form_unreachable")
 
     async def _fill_react_input(self, locator, value: str) -> bool:
         try:
@@ -720,6 +726,7 @@ class CMSPublisher:
 
                 await asyncio.sleep(0.6)
 
+                # Primary verification: the trigger now shows the chosen label.
                 try:
                     selected_text = (await dropdown.inner_text()).strip().lower()
                     if chosen and chosen.lower() in selected_text:
@@ -727,6 +734,17 @@ class CMSPublisher:
                         return True
                 except Exception:
                     pass
+
+                # Lenient verification: we clicked an exact option and the option
+                # list has since closed — treat as committed selection.
+                if chosen:
+                    try:
+                        still_open = await _find_category_option(chosen)
+                        if still_open is None:
+                            self.logger.info(f"Category selected (list closed): {chosen}")
+                            return True
+                    except Exception:
+                        pass
 
             self.logger.error(f"Category verify failed. target={target} selected=unknown")
             return False
@@ -915,7 +933,7 @@ class CMSPublisher:
 
     async def fill_form(self, data: ArticleData) -> bool:
         if not await self.ensure_live_page():
-            return False
+            return self._fail("browser_unavailable")
 
         try:
             self.logger.info(
@@ -926,25 +944,24 @@ class CMSPublisher:
                 bool(data.image_search_query),
             )
             if not await self._is_article_form_open():
-                self.logger.error("Form not open before fill")
-                return False
+                return self._fail("form_not_open")
 
             title_field = await self._find_english_title_field()
             body_field = await self._find_english_body_field()
-            if title_field is None or body_field is None:
-                self.logger.error("English content fields not found")
-                return False
+            if title_field is None:
+                return self._fail("title_field_not_found")
+            if body_field is None:
+                return self._fail("body_field_not_found")
 
             if not await self._fill_react_input(title_field, data.english_title):
-                return False
+                return self._fail("title_fill_failed")
             if not await self._fill_react_input(body_field, data.english_body):
-                return False
+                return self._fail("body_fill_failed")
             self.logger.info("ArticleData English fields injected into CMS form")
 
             await self._scroll_form_to_section("Category")
             if not await self._select_category(data.category):
-                self.logger.error("Category selection failed")
-                return False
+                return self._fail(f"category_select_failed:{data.category}")
 
             await self._scroll_form_to_section("Keywords")
             if not await self._fill_keywords(data.hashtag):
@@ -965,19 +982,19 @@ class CMSPublisher:
                 image_path = await self.image_finder.find_and_download(data.image_search_query)
 
             if not image_path or not os.path.exists(image_path):
-                self.logger.warning("Image path missing while filling form")
-                return False
+                return self._fail("image_missing")
 
             data.image_path = image_path
             await self._scroll_form_to_section("Media")
             if not await self._upload_image(image_path):
-                return False
+                return self._fail("image_upload_failed")
 
+            self.last_error = ""
             return True
         except Exception as exc:
             self.logger.error(f"Form error: {exc}")
             await self._dump_debug("form_fill_error")
-            return False
+            return self._fail(f"form_exception:{type(exc).__name__}")
 
     @staticmethod
     def _publish_candidate_rank(meta: Dict[str, Any]) -> int:
@@ -1203,10 +1220,11 @@ class CMSPublisher:
 
     async def publish(self) -> bool:
         if not await self.ensure_live_page():
-            return False
+            return self._fail("browser_unavailable")
 
         try:
             if await self._is_articles_page() and not await self._is_article_form_open():
+                self.last_error = ""
                 return True
 
             btn = None
@@ -1220,25 +1238,27 @@ class CMSPublisher:
 
             if btn is None:
                 await self._dump_debug("publish_button_missing")
-                self.logger.error("Publish button not found")
-                return False
+                return self._fail("submit_button_not_found")
 
-            await btn.scroll_into_view_if_needed()
+            try:
+                await btn.scroll_into_view_if_needed(timeout=5000)
+            except Exception:
+                pass
             await asyncio.sleep(0.3)
             await btn.click(force=True)
 
             if await self._wait_publish_success():
                 # Let CMS React state fully settle before the next article opens the modal
                 await asyncio.sleep(1.5)
+                self.last_error = ""
                 return True
 
             await self._dump_debug("publish_no_success_signal")
-            self.logger.error("Publish click done but no success signal")
-            return False
+            return self._fail("no_success_signal_after_submit")
         except Exception as exc:
             self.logger.error(f"Publish failed: {exc}")
             await self._dump_debug("publish_exception")
-            return False
+            return self._fail(f"publish_exception:{type(exc).__name__}")
 
     async def verify_publish(self) -> bool:
         return await self._wait_publish_success()

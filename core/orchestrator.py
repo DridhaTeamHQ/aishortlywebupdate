@@ -1104,7 +1104,17 @@ class HardenedOrchestrator:
 
         await self._emit_event("STEP_STARTED", {"step": "publish", "url": article.url})
         workflow_ok = await self._execute_browser_workflow(data, article.url)
-        await self._emit_event("STEP_DONE", {"step": "publish", "url": article.url, "ok": bool(workflow_ok)})
+        publish_reason = "" if workflow_ok else (getattr(self.publisher, "last_error", "") or "workflow_failed")
+        await self._emit_event(
+            "STEP_DONE",
+            {
+                "step": "publish",
+                "url": article.url,
+                "ok": bool(workflow_ok),
+                "reason": publish_reason,
+                "category": data.category,
+            },
+        )
         if self._is_cancelled():
             return False, "cancelled", "", ""
         if workflow_ok:

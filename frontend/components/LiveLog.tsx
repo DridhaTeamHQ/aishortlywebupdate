@@ -61,6 +61,8 @@ function buildMessage(event: EventRow): Built {
         if (payload.categories) extras.push(`${payload.categories} categories`);
         if (payload.clusters) extras.push(`${payload.clusters} story clusters`);
         if (payload.breaking !== undefined) extras.push(`${payload.breaking} breaking`);
+        // Surface the precise publish failure reason so issues are diagnosable at a glance.
+        if (!ok && payload.reason) extras.unshift(`reason: ${payload.reason}`);
         return {
             icon: ok ? '✅' : '⚠️',
             message: `${stepInfo.label} ${ok ? '— done' : '— failed'}`,
