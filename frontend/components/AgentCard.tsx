@@ -107,11 +107,11 @@ export default function AgentCard({ agent, isRunning, onStartRun, onStopRun, run
 
       {!isRunning ? (
         <button className="btn btn-primary" onClick={handleStart} disabled={busy || !agent.enabled}>
-          {busy ? <><div className="spinner" /> Starting…</> : <>▶&nbsp;&nbsp;Start Agent</>}
+          {busy ? <><div className="spinner" /> LOADING…</> : <>▶&nbsp;&nbsp;PRESS START</>}
         </button>
       ) : (
         <button className="btn btn-danger" onClick={handleStop} disabled={busy || runStatus === 'stopping'}>
-          {busy || runStatus === 'stopping' ? <><div className="spinner" /> Stopping…</> : <>■&nbsp;&nbsp;Stop Agent</>}
+          {busy || runStatus === 'stopping' ? <><div className="spinner" /> STOPPING…</> : <>■&nbsp;&nbsp;GAME OVER</>}
         </button>
       )}
 

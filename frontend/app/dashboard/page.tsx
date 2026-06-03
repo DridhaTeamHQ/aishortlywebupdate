@@ -214,7 +214,7 @@ export default function DashboardPage() {
           <div className="navbar-brand-icon">⚡</div>
           <div className="navbar-brand-text">
             <span className="navbar-title">Shortly AI</span>
-            <span className="navbar-sub">News Agent Control</span>
+            <span className="navbar-sub">▸ PLAYER 1 · NEWS BOT</span>
           </div>
         </div>
         <ThemeToggle />
@@ -249,7 +249,7 @@ export default function DashboardPage() {
       {run && (
         <div className="card glass run-panel">
           <div className="run-header">
-            <h3>Current Run</h3>
+            <h3>◈ Current Run</h3>
             <span className={`badge badge-${run.status}`}>
               {isRunning && <span className="status-dot status-dot-running" />}
               {run.status}
@@ -278,7 +278,7 @@ export default function DashboardPage() {
       {/* ─── Live Log ─── */}
       <LiveLog events={events} />
 
-      <footer className="page-footer">Shortly AI · autonomous newsroom</footer>
+      <footer className="page-footer">★ SHORTLY AI ★ INSERT COIN TO PLAY ★</footer>
     </main>
   );
 }

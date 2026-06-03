@@ -138,8 +138,8 @@ export default function LiveLog({ events }: { events: EventRow[] }) {
                     <h3>Live Activity</h3>
                 </div>
                 <div className="empty-state">
-                    <div className="empty-state-icon">🤖</div>
-                    <div className="empty-state-text">Start the agent to see live activity here</div>
+                    <div className="empty-state-icon">👾</div>
+                    <div className="empty-state-text">PRESS START TO BEGIN</div>
                 </div>
             </div>
         );
