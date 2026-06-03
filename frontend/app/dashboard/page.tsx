@@ -1,10 +1,9 @@
 'use client';
 
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
-import { useRouter } from 'next/navigation';
 import AgentCard, { Agent } from '../../components/AgentCard';
 import LiveLog from '../../components/LiveLog';
-import { supabase } from '../../lib/supabase';
+import ThemeToggle from '../../components/ThemeToggle';
 
 type RunRow = {
   id: string;
@@ -23,157 +22,81 @@ type EventRow = {
 };
 
 const ACTIVE_STATUSES = new Set(['queued', 'running', 'stopping']);
-const POLL_INTERVAL = 2000; // 2 seconds
-const STOP_STALE_MS = 15000;
-const QUEUE_STALE_MS = 45000;
-const ORPHAN_RUN_MAX_AGE_MS = 10 * 60 * 1000;
+const POLL_INTERVAL = 2000;
+const STOP_STALE_MS = 30000;
+const QUEUE_STALE_MS = 3 * 60000;
 
 export default function DashboardPage() {
-  const router = useRouter();
-  const [user, setUser] = useState<any>(null);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [run, setRun] = useState<RunRow | null>(null);
   const [events, setEvents] = useState<EventRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [dashboardError, setDashboardError] = useState<string | null>(null);
-  const pollRef = useRef<NodeJS.Timeout | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const stopRequestedAtRef = useRef<number | null>(null);
   const forceCancellingRef = useRef(false);
 
-  // ─── Auth check ───────────────────────────────
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      if (!data.session) {
-        router.replace('/login');
-        return;
-      }
-      setUser(data.session.user);
-    });
-
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (!session) router.replace('/login');
-    });
-
-    return () => { listener.subscription.unsubscribe(); };
-  }, [router]);
-
   // ─── Load agents + detect any active run ──────
   useEffect(() => {
-    if (!user) return;
-    supabase.auth.getSession().then(async ({ data }) => {
-      const accessToken = data.session?.access_token;
-      if (!accessToken) {
-        router.replace('/login');
-        return;
-      }
+    (async () => {
+      try {
+        const res = await fetch('/api/agents', { cache: 'no-store' });
+        const payload = await res.json();
+        if (!res.ok) throw new Error(payload.error || 'Unable to load agents');
 
-      const response = await fetch('/api/agents', {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-      });
-      const payload = await response.json();
-      if (!response.ok) {
-        throw new Error(payload.error || payload.detail || 'Unable to load agents');
-      }
+        const list: Agent[] = payload.agents || [];
+        setAgents(list);
+        setDashboardError(null);
+        setLoading(false);
 
-      setAgents(payload.agents || []);
-      setDashboardError(null);
-      setLoading(false);
-
-      // Check for any active run in the database
-      const { data: activeRuns } = await supabase
-        .from('agent_runs')
-        .select('id,status,current_step,created_at,started_at,finished_at')
-        .eq('created_by', user.id)
-        .in('status', ['queued', 'running', 'stopping'])
-        .order('created_at', { ascending: false })
-        .limit(1);
-
-      if (activeRuns && activeRuns.length > 0) {
-        const activeRun = activeRuns[0] as RunRow;
-        const createdAtMs = activeRun.created_at ? new Date(activeRun.created_at).getTime() : 0;
-        const isLikelyOrphan =
-          (activeRun.status === 'queued' || activeRun.status === 'stopping') &&
-          createdAtMs > 0 &&
-          (Date.now() - createdAtMs) > ORPHAN_RUN_MAX_AGE_MS;
-
-        if (!isLikelyOrphan) {
-          setActiveRunId(activeRun.id);
-          setRun(activeRun);
-          if (activeRun.status === 'stopping') {
-            stopRequestedAtRef.current = Date.now();
+        if (list.length) {
+          const arRes = await fetch(`/api/agents/${list[0].id}/active-run`, { cache: 'no-store' });
+          const arData = await arRes.json();
+          if (arRes.ok && arData.run) {
+            setActiveRunId(arData.run.id);
+            setRun(arData.run as RunRow);
+            if (arData.run.status === 'stopping') stopRequestedAtRef.current = Date.now();
           }
-
-          // Load existing events for this run
-          const { data: existingEvents } = await supabase
-            .from('agent_run_events')
-            .select('id,event_type,payload,created_at')
-            .eq('run_id', activeRun.id)
-            .order('id', { ascending: true });
-          if (existingEvents) setEvents(existingEvents);
         }
-      }
-    })
-      .catch((error: Error) => {
+      } catch (error: any) {
         setDashboardError(error.message);
         setLoading(false);
-      });
-  }, [router, user]);
+      }
+    })();
+  }, []);
 
-  // ─── Poll for run status + events (reliable fallback) ──────
+  // ─── Poll run status + events via API ──────
   useEffect(() => {
     if (!activeRunId) {
-      // Clear any existing poll
       if (pollRef.current) clearInterval(pollRef.current);
       return;
     }
 
     const poll = async () => {
       try {
-        // Fetch run status
-        const { data: runData, error: runError } = await supabase
-          .from('agent_runs')
-          .select('id,status,current_step,created_at,started_at,finished_at')
-          .eq('id', activeRunId)
-          .single();
-
-        // If the run row no longer exists (commonly surfaced as 406/PGRST116), clear stale UI state.
-        if (runError && (runError.code === 'PGRST116' || runError.message?.includes('JSON object requested'))) {
+        const res = await fetch(`/api/runs/${activeRunId}`, { cache: 'no-store' });
+        if (res.status === 404) {
           setRun(null);
           setEvents([]);
           setActiveRunId(null);
           stopRequestedAtRef.current = null;
           forceCancellingRef.current = false;
-          if (pollRef.current) {
-            clearInterval(pollRef.current);
-            pollRef.current = null;
-          }
+          if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
           return;
         }
+        const data = await res.json();
+        if (!res.ok) return;
 
-        if (runData) setRun(runData as RunRow);
+        const runData = data.run as RunRow;
+        if (runData) setRun(runData);
 
-        // Fetch all events (compare by count to avoid duplicates)
-        const { data: eventsData } = await supabase
-          .from('agent_run_events')
-          .select('id,event_type,payload,created_at')
-          .eq('run_id', activeRunId)
-          .order('id', { ascending: true });
+        const eventsData = (data.events || []) as EventRow[];
+        setEvents((prev) => (eventsData.length >= prev.length ? eventsData : prev));
 
-        if (eventsData) {
-          setEvents((prev) => {
-            // Only update if we got new events
-            if (eventsData.length > prev.length) {
-              return eventsData;
-            }
-            return prev;
-          });
-        }
-
+        // Stale-run watchdog.
         if (runData?.status === 'stopping' || runData?.status === 'queued') {
-          const lastEventTime = eventsData && eventsData.length > 0
+          const lastEventTime = eventsData.length
             ? new Date(eventsData[eventsData.length - 1].created_at).getTime()
             : 0;
           const runActivityTime = Math.max(
@@ -182,89 +105,47 @@ export default function DashboardPage() {
             runData.created_at ? new Date(runData.created_at).getTime() : 0,
             stopRequestedAtRef.current || 0,
           );
-
           const staleLimit = runData.status === 'queued' ? QUEUE_STALE_MS : STOP_STALE_MS;
-          if (
-            !forceCancellingRef.current &&
-            runActivityTime > 0 &&
-            (Date.now() - runActivityTime) >= staleLimit
-          ) {
+          if (!forceCancellingRef.current && runActivityTime > 0 && Date.now() - runActivityTime >= staleLimit) {
             forceCancellingRef.current = true;
-            const session = (await supabase.auth.getSession()).data.session;
-            if (session) {
-              const response = await fetch(`/api/runs/${activeRunId}/stop?force=1`, {
-                method: 'POST',
-                headers: { Authorization: `Bearer ${session.access_token}` },
-              });
-              const payload = await response.json();
-              if (response.ok) {
-                setRun((prev) => prev ? {
-                  ...prev,
-                  status: payload.status || 'cancelled',
-                  current_step: 'cancelled',
-                  finished_at: new Date().toISOString(),
-                } : prev);
-                stopRequestedAtRef.current = null;
-              }
+            const r = await fetch(`/api/runs/${activeRunId}/stop?force=1`, { method: 'POST' });
+            const p = await r.json();
+            if (r.ok) {
+              setRun((prev) => prev ? { ...prev, status: p.status || 'cancelled', current_step: 'cancelled', finished_at: new Date().toISOString() } : prev);
+              stopRequestedAtRef.current = null;
             }
             forceCancellingRef.current = false;
           }
         }
 
-        // Stop polling if run is finished
         if (runData && !ACTIVE_STATUSES.has(runData.status)) {
           stopRequestedAtRef.current = null;
           forceCancellingRef.current = false;
-          if (pollRef.current) {
-            clearInterval(pollRef.current);
-            pollRef.current = null;
-          }
+          if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
         }
-      } catch (err) {
-        // Silent fail, will retry next poll
+      } catch {
+        // silent retry
       }
     };
 
-    // Initial fetch
     poll();
-
-    // Start polling
     pollRef.current = setInterval(poll, POLL_INTERVAL);
-
-    return () => {
-      if (pollRef.current) {
-        clearInterval(pollRef.current);
-        pollRef.current = null;
-      }
-    };
+    return () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
   }, [activeRunId]);
 
   // ─── Handlers ─────────────────────────────────
   const startRun = useCallback(async (agentId: string, category: string = 'all') => {
-    const session = (await supabase.auth.getSession()).data.session;
-    if (!session) throw new Error('Please sign in again.');
-
-    // Don't start if already running
     if (run && ACTIVE_STATUSES.has(run.status)) {
       throw new Error('An agent run is already active.');
     }
-
     const res = await fetch(`/api/agents/${agentId}/runs`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${session.access_token}`,
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ category }),
     });
     const data = await res.json();
-    if (!res.ok) {
-      throw new Error(data.error || data.detail || 'Failed to start run.');
-    }
-
-    if (!data.run_id) {
-      throw new Error('Run was not created.');
-    }
+    if (!res.ok) throw new Error(data.error || 'Failed to start run.');
+    if (!data.run_id) throw new Error('Run was not created.');
 
     setActiveRunId(data.run_id);
     setEvents([]);
@@ -281,30 +162,15 @@ export default function DashboardPage() {
 
   const stopRun = useCallback(async () => {
     if (!activeRunId) return;
-    const session = (await supabase.auth.getSession()).data.session;
-    if (!session) {
-      setDashboardError('Please sign in again.');
+    const res = await fetch(`/api/runs/${activeRunId}/stop`, { method: 'POST' });
+    const payload = await res.json();
+    if (!res.ok) {
+      setDashboardError(payload.error || 'Failed to stop run.');
       return;
     }
-
-    const response = await fetch(`/api/runs/${activeRunId}/stop`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${session.access_token}` },
-    });
-    const payload = await response.json();
-    if (!response.ok) {
-      setDashboardError(payload.error || payload.detail || 'Failed to stop run.');
-      return;
-    }
-
     setDashboardError(null);
-    if (payload.status === 'stopping') {
-      stopRequestedAtRef.current = Date.now();
-    } else {
-      stopRequestedAtRef.current = null;
-      forceCancellingRef.current = false;
-    }
-    // Optimistic update
+    if (payload.status === 'stopping') stopRequestedAtRef.current = Date.now();
+    else { stopRequestedAtRef.current = null; forceCancellingRef.current = false; }
     setRun((prev) => prev ? {
       ...prev,
       status: payload.status || 'stopping',
@@ -313,11 +179,6 @@ export default function DashboardPage() {
     } : prev);
   }, [activeRunId]);
 
-  const signOut = async () => {
-    await supabase.auth.signOut();
-    router.replace('/login');
-  };
-
   // ─── Derived state ────────────────────────────
   const isRunning = run ? ACTIVE_STATUSES.has(run.status) : false;
 
@@ -325,21 +186,19 @@ export default function DashboardPage() {
     if (!run?.started_at) return null;
     const start = new Date(run.started_at).getTime();
     const end = run.finished_at ? new Date(run.finished_at).getTime() : Date.now();
-    const seconds = Math.floor((end - start) / 1000);
-    const min = Math.floor(seconds / 60);
-    const sec = seconds % 60;
-    return `${min}m ${sec}s`;
+    const seconds = Math.max(0, Math.floor((end - start) / 1000));
+    return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
   }, [run?.started_at, run?.finished_at, events.length]);
 
-  const publishedCount = useMemo(() => {
-    return events.filter(
-      (e) => e.event_type === 'STEP_DONE' && e.payload?.step === 'publish' && e.payload?.ok
-    ).length;
-  }, [events]);
+  const publishedCount = useMemo(
+    () => events.filter((e) => e.event_type === 'STEP_DONE' && e.payload?.step === 'publish' && e.payload?.ok).length,
+    [events],
+  );
 
   if (loading) {
     return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div className="loading-screen">
+        <div className="aurora" aria-hidden><span /></div>
         <div className="spinner" />
       </div>
     );
@@ -348,26 +207,23 @@ export default function DashboardPage() {
   return (
     <main className="page-wrap">
       <div className="aurora" aria-hidden><span /></div>
-      {/* ─── Navbar ─── */}
-      <nav className="navbar">
+
+      {/* ─── Top bar ─── */}
+      <nav className="navbar glass">
         <div className="navbar-brand">
           <div className="navbar-brand-icon">⚡</div>
-          <span>Shortly AI</span>
+          <div className="navbar-brand-text">
+            <span className="navbar-title">Shortly AI</span>
+            <span className="navbar-sub">News Agent Control</span>
+          </div>
         </div>
-        <div className="navbar-actions">
-          <span className="text-muted">{user?.email}</span>
-          <button className="btn btn-sm" onClick={signOut}>Sign Out</button>
-        </div>
+        <ThemeToggle />
       </nav>
 
-      {dashboardError && (
-        <div className="form-error" style={{ marginBottom: 20 }}>
-          {dashboardError}
-        </div>
-      )}
+      {dashboardError && <div className="form-error">{dashboardError}</div>}
 
       {/* ─── Agent Cards ─── */}
-      <div className="grid grid-2" style={{ marginBottom: 20 }}>
+      <div className="grid grid-2">
         {agents.map((agent) => (
           <AgentCard
             key={agent.id}
@@ -380,10 +236,10 @@ export default function DashboardPage() {
           />
         ))}
         {!agents.length && (
-          <div className="card">
+          <div className="card glass">
             <div className="empty-state">
               <div className="empty-state-icon">🤖</div>
-              <div className="empty-state-text">No agents configured. Apply the Supabase schema to get started.</div>
+              <div className="empty-state-text">No agents configured yet.</div>
             </div>
           </div>
         )}
@@ -391,11 +247,11 @@ export default function DashboardPage() {
 
       {/* ─── Run Stats ─── */}
       {run && (
-        <div className="card" style={{ marginBottom: 20, animation: 'slideUp 0.4s ease-out both' }}>
+        <div className="card glass run-panel">
           <div className="run-header">
-            <h3 style={{ margin: 0 }}>📊 Current Run</h3>
+            <h3>Current Run</h3>
             <span className={`badge badge-${run.status}`}>
-              {isRunning && <div className="status-dot status-dot-running" style={{ width: 6, height: 6 }} />}
+              {isRunning && <span className="status-dot status-dot-running" />}
               {run.status}
             </span>
           </div>
@@ -420,6 +276,8 @@ export default function DashboardPage() {
 
       {/* ─── Live Log ─── */}
       <LiveLog events={events} />
+
+      <footer className="page-footer">Shortly AI · autonomous newsroom</footer>
     </main>
   );
 }

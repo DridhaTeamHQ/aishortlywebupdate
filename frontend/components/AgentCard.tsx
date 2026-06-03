@@ -66,9 +66,9 @@ export default function AgentCard({ agent, isRunning, onStartRun, onStopRun, run
     : `status-dot status-dot-${agent.health_status === 'healthy' ? 'succeeded' : 'failed'}`;
 
   return (
-    <div className="card agent-card">
+    <div className="card glass agent-card">
       <div className="agent-header">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
           <div className={statusDotClass} />
           <span className="agent-name">{agent.display_name}</span>
         </div>
@@ -105,27 +105,17 @@ export default function AgentCard({ agent, isRunning, onStartRun, onStopRun, run
         </div>
       )}
 
-      <div style={{ display: 'flex', gap: 8 }}>
-        {!isRunning ? (
-          <button
-            className="btn btn-primary"
-            onClick={handleStart}
-            disabled={busy || !agent.enabled}
-          >
-            {busy ? <><div className="spinner" /> Starting…</> : <>▶  Start Agent</>}
-          </button>
-        ) : (
-          <button
-            className="btn btn-danger"
-            onClick={handleStop}
-            disabled={busy || runStatus === 'stopping'}
-          >
-            {busy || runStatus === 'stopping' ? <><div className="spinner" /> Stopping…</> : <>■  Stop Agent</>}
-          </button>
-        )}
-      </div>
+      {!isRunning ? (
+        <button className="btn btn-primary" onClick={handleStart} disabled={busy || !agent.enabled}>
+          {busy ? <><div className="spinner" /> Starting…</> : <>▶&nbsp;&nbsp;Start Agent</>}
+        </button>
+      ) : (
+        <button className="btn btn-danger" onClick={handleStop} disabled={busy || runStatus === 'stopping'}>
+          {busy || runStatus === 'stopping' ? <><div className="spinner" /> Stopping…</> : <>■&nbsp;&nbsp;Stop Agent</>}
+        </button>
+      )}
 
-      {error && <div className="form-error" style={{ marginTop: 8 }}>{error}</div>}
+      {error && <div className="form-error" style={{ marginTop: 12 }}>{error}</div>}
     </div>
   );
 }

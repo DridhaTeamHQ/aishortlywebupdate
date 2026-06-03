@@ -133,20 +133,22 @@ export default function LiveLog({ events }: { events: EventRow[] }) {
 
     if (!events.length) {
         return (
-            <div className="card">
-                <h3>Live Activity</h3>
+            <div className="card glass">
+                <div className="live-log-header">
+                    <h3>Live Activity</h3>
+                </div>
                 <div className="empty-state">
                     <div className="empty-state-icon">🤖</div>
-                    <div className="empty-state-text">Start an agent to see live activity here</div>
+                    <div className="empty-state-text">Start the agent to see live activity here</div>
                 </div>
             </div>
         );
     }
 
     return (
-        <div className="card card-glow">
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-                <h3 style={{ margin: 0, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+        <div className="card glass">
+            <div className="live-log-header">
+                <h3 style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
                     Live Activity
                     {!lastIsTerminal && (
                         <span className="typing-dots" aria-hidden>

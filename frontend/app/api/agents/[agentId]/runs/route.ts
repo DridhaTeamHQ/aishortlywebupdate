@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getServiceClient, getUserFromRequest } from '../../../../../lib/supabase-server';
+import { getServiceClient, resolveActor } from '../../../../../lib/supabase-server';
 
 const QUEUE_STALE_MS = 3 * 60_000;     // 3 min — give Railway worker time to wake up
 const STOP_STALE_MS = 30_000;
@@ -27,7 +27,6 @@ async function recoverStaleRuns(
     .from('agent_runs')
     .select('id, status, created_at, started_at')
     .eq('agent_id', agentId)
-    .eq('created_by', userId)
     .in('status', ['queued', 'running', 'stopping']);
 
   const runs = (activeRuns || []) as ActiveRun[];
@@ -68,7 +67,6 @@ async function recoverStaleRuns(
         finished_at: finishedAt,
       })
       .eq('id', run.id)
-      .eq('created_by', userId)
       .in('status', ['queued', 'running', 'stopping']);
 
     await sb.from('agent_run_events').insert({
@@ -86,9 +84,9 @@ export async function POST(
   { params }: { params: { agentId: string } },
 ) {
   try {
-    const user = await getUserFromRequest(request);
-    if (!user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const actor = await resolveActor();
+    if (!actor) {
+      return NextResponse.json({ error: 'No org/profile configured' }, { status: 500 });
     }
 
     const sb = getServiceClient();
@@ -116,21 +114,11 @@ export async function POST(
       // No body or invalid JSON — default to 'all'
     }
 
-    const { data: profile } = await sb
-      .from('profiles')
-      .select('org_id')
-      .eq('id', user.id)
-      .single();
-
-    if (!profile) {
-      return NextResponse.json({ error: 'Profile not found' }, { status: 404 });
-    }
-
     const { data: agent } = await sb
       .from('agents')
       .select('id, enabled')
       .eq('id', agentId)
-      .eq('org_id', profile.org_id)
+      .eq('org_id', actor.orgId)
       .single();
 
     if (!agent) {
@@ -142,13 +130,12 @@ export async function POST(
     }
 
     // Recover stale runs so stop/restart cycles don't remain blocked by old rows.
-    await recoverStaleRuns(sb, agentId, user.id);
+    await recoverStaleRuns(sb, agentId, actor.userId);
 
     const { data: activeRuns } = await sb
       .from('agent_runs')
       .select('id, status')
       .eq('agent_id', agentId)
-      .eq('created_by', user.id)
       .in('status', ['queued', 'running', 'stopping'])
       .limit(1);
 
@@ -162,9 +149,9 @@ export async function POST(
     const { data: newRun, error } = await sb
       .from('agent_runs')
       .insert({
-        org_id: profile.org_id,
+        org_id: actor.orgId,
         agent_id: agentId,
-        created_by: user.id,
+        created_by: actor.userId,
         status: 'queued',
         current_step: 'queued',
         category,

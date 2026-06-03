@@ -1,28 +1,18 @@
 import { NextResponse } from 'next/server';
-import { getServiceClient, getUserFromRequest } from '../../../lib/supabase-server';
+import { getServiceClient, resolveActor } from '../../../lib/supabase-server';
 
-export async function GET(request: Request) {
+export async function GET() {
   try {
-    const user = await getUserFromRequest(request);
-    if (!user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const actor = await resolveActor();
+    if (!actor) {
+      return NextResponse.json({ error: 'No org/profile configured' }, { status: 500 });
     }
 
     const sb = getServiceClient();
-    const { data: profile } = await sb
-      .from('profiles')
-      .select('org_id')
-      .eq('id', user.id)
-      .single();
-
-    if (!profile) {
-      return NextResponse.json({ error: 'Profile not found' }, { status: 404 });
-    }
-
     const { data: agents, error } = await sb
       .from('agents')
       .select('id, slug, display_name, enabled, health_status, created_at')
-      .eq('org_id', profile.org_id)
+      .eq('org_id', actor.orgId)
       .order('created_at', { ascending: true });
 
     if (error) {

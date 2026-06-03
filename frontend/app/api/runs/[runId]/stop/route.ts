@@ -1,16 +1,11 @@
 import { NextResponse } from 'next/server';
-import { getServiceClient, getUserFromRequest } from '../../../../../lib/supabase-server';
+import { getServiceClient } from '../../../../../lib/supabase-server';
 
 export async function POST(
   request: Request,
   { params }: { params: { runId: string } },
 ) {
   try {
-    const user = await getUserFromRequest(request);
-    if (!user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
     const sb = getServiceClient();
     const runId = params.runId;
     const { searchParams } = new URL(request.url);
@@ -20,8 +15,7 @@ export async function POST(
       .from('agent_runs')
       .select('id, status, created_by, agent_id')
       .eq('id', runId)
-      .eq('created_by', user.id)
-      .single();
+      .maybeSingle();
 
     if (!run) {
       return NextResponse.json({ error: 'Run not found' }, { status: 404 });
@@ -40,8 +34,7 @@ export async function POST(
           current_step: 'cancelled',
           finished_at: finishedAt,
         })
-        .eq('id', runId)
-        .eq('created_by', user.id);
+        .eq('id', runId);
 
       if (cancelError) {
         return NextResponse.json({ error: cancelError.message }, { status: 500 });
@@ -52,7 +45,7 @@ export async function POST(
         agent_id: run.agent_id,
         event_type: 'RUN_FINISHED',
         payload: { status: 'cancelled', error: 'force_cancelled_from_ui' },
-        created_by: user.id,
+        created_by: run.created_by,
       });
 
       return NextResponse.json({ ok: true, status: 'cancelled', forced: true });
@@ -67,8 +60,7 @@ export async function POST(
           current_step: 'cancelled',
           finished_at: finishedAt,
         })
-        .eq('id', runId)
-        .eq('created_by', user.id);
+        .eq('id', runId);
 
       if (cancelQueuedError) {
         return NextResponse.json({ error: cancelQueuedError.message }, { status: 500 });
@@ -79,7 +71,7 @@ export async function POST(
         agent_id: run.agent_id,
         event_type: 'RUN_FINISHED',
         payload: { status: 'cancelled', error: 'cancelled_while_queued' },
-        created_by: user.id,
+        created_by: run.created_by,
       });
 
       return NextResponse.json({ ok: true, status: 'cancelled', forced: false });
@@ -95,8 +87,7 @@ export async function POST(
     const { error } = await sb
       .from('agent_runs')
       .update({ status: 'stopping' })
-      .eq('id', runId)
-      .eq('created_by', user.id);
+      .eq('id', runId);
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });

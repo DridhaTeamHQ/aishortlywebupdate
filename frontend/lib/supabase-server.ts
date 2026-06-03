@@ -9,14 +9,47 @@ export function getServiceClient() {
     });
 }
 
-export async function getUserFromRequest(request: Request): Promise<{ id: string; email: string } | null> {
-    const auth = request.headers.get('Authorization');
-    if (!auth?.startsWith('Bearer ')) return null;
+export type Actor = { userId: string; orgId: string };
 
-    const token = auth.slice(7);
-    const client = createClient(url, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '');
-    const { data, error } = await client.auth.getUser(token);
-    if (error || !data.user) return null;
+let cachedActor: Actor | null = null;
 
-    return { id: data.user.id, email: data.user.email || '' };
+/**
+ * Resolve the default actor (user + org) for this single-tenant deployment.
+ * Auth has been removed from the UI, so the API derives a stable identity
+ * from the database (or DEFAULT_ORG_ID / DEFAULT_USER_ID env overrides).
+ * The service-role client bypasses RLS, so no end-user session is required.
+ */
+export async function resolveActor(): Promise<Actor | null> {
+    if (cachedActor) return cachedActor;
+
+    const sb = getServiceClient();
+    let orgId = (process.env.DEFAULT_ORG_ID || '').trim() || null;
+    let userId = (process.env.DEFAULT_USER_ID || '').trim() || null;
+
+    try {
+        if (!orgId) {
+            const { data } = await sb.from('agents').select('org_id').limit(1).maybeSingle();
+            orgId = (data as any)?.org_id ?? null;
+        }
+        if (!userId && orgId) {
+            const { data } = await sb
+                .from('profiles')
+                .select('id')
+                .eq('org_id', orgId)
+                .limit(1)
+                .maybeSingle();
+            userId = (data as any)?.id ?? null;
+        }
+        if (!userId) {
+            const { data } = await sb.from('profiles').select('id, org_id').limit(1).maybeSingle();
+            userId = (data as any)?.id ?? null;
+            if (!orgId) orgId = (data as any)?.org_id ?? null;
+        }
+    } catch {
+        // fall through — handled below
+    }
+
+    if (!userId || !orgId) return null;
+    cachedActor = { userId, orgId };
+    return cachedActor;
 }
