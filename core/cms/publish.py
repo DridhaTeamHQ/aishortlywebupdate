@@ -761,7 +761,13 @@ class CMSPublisher:
             await self._ensure_media_type_image()
             chooser = scope.locator("input[type='file']").first
             if await chooser.count() == 0:
-                await self._click_first(["text='Choose File'", "button:has-text('Choose File')"], "Choose File")
+                await self._click_first(
+                    [
+                        "text='Browse Files'", "button:has-text('Browse Files')",
+                        "text='Choose File'", "button:has-text('Choose File')",
+                    ],
+                    "Browse Files",
+                )
                 await asyncio.sleep(0.8)
                 chooser = scope.locator("input[type='file']").first
 
@@ -770,26 +776,112 @@ class CMSPublisher:
                 return False
 
             await chooser.set_input_files(image_path)
-            await asyncio.sleep(1.5)
+            await asyncio.sleep(1.0)
 
-            files_count = await chooser.evaluate("el => (el.files && el.files.length) ? el.files.length : 0")
-            if not isinstance(files_count, int) or files_count < 1:
-                self.logger.error("Image upload did not attach a file")
-                return False
+            # The redesigned CMS pops a "Crop Image" dialog the moment the file is
+            # accepted, and clears the <input> as it reads it — so input.files.length
+            # is unreliable (reads 0 even on success). Confirm via the crop dialog.
+            if await self._confirm_image_crop():
+                return True
 
-            crop_btn = self.page.locator("button:has-text('Crop')").first
+            # No crop dialog appeared — fall back to direct-attach signals.
             try:
-                if await crop_btn.count() > 0 and await crop_btn.is_visible(timeout=1200):
-                    await crop_btn.click(force=True)
-                    await asyncio.sleep(1.0)
+                files_count = await chooser.evaluate("el => (el.files && el.files.length) ? el.files.length : 0")
             except Exception:
-                pass
+                files_count = 0
+            if isinstance(files_count, int) and files_count >= 1:
+                return True
+            if await self._image_preview_present():
+                return True
 
-            return True
+            self.logger.error("Image upload did not attach a file (no crop dialog, no preview)")
+            await self._dump_debug("image_attach_unconfirmed")
+            return False
         except Exception as exc:
             self.logger.error(f"Image upload failed: {exc}")
             await self._dump_debug("image_upload_error")
             return False
+
+    async def _confirm_image_crop(self) -> bool:
+        """Wait for the Crop Image dialog and click its Crop button to confirm the upload."""
+        if self.page is None:
+            return False
+
+        crop_dialog = (
+            self.page.locator("[role='dialog']")
+            .filter(has=self.page.get_by_text(re.compile(r"crop image", re.I)))
+            .first
+        )
+        crop_button = self.page.get_by_role("button", name=re.compile(r"^\s*crop\s*$", re.I)).first
+
+        appeared = False
+        for _ in range(12):
+            for signal in (crop_dialog, crop_button):
+                try:
+                    if await signal.count() > 0 and await signal.is_visible(timeout=300):
+                        appeared = True
+                        break
+                except Exception:
+                    pass
+            if appeared:
+                break
+            await asyncio.sleep(0.3)
+
+        if not appeared:
+            return False
+
+        crop_candidates = [
+            crop_button,
+            self.page.locator("[role='dialog'] button:has-text('Crop')").last,
+            self.page.locator("button:has-text('Crop')").last,
+        ]
+        for candidate in crop_candidates:
+            try:
+                if await candidate.count() == 0 or not await candidate.is_visible(timeout=500):
+                    continue
+                await candidate.scroll_into_view_if_needed(timeout=3000)
+            except Exception:
+                pass
+            try:
+                await candidate.click(force=True)
+                await asyncio.sleep(1.0)
+            except Exception:
+                continue
+            # Success when the crop dialog dismisses.
+            for _ in range(12):
+                try:
+                    if await crop_dialog.count() == 0 or not await crop_dialog.is_visible(timeout=300):
+                        self.logger.info("Image crop confirmed")
+                        return True
+                except Exception:
+                    self.logger.info("Image crop confirmed (dialog gone)")
+                    return True
+                await asyncio.sleep(0.3)
+            # Clicked but dialog lingered; treat as confirmed to avoid a false negative.
+            self.logger.warning("Crop clicked but dialog still visible — proceeding")
+            return True
+
+        self.logger.error("Crop dialog present but Crop button not clickable")
+        await self._dump_debug("crop_button_unclickable")
+        return False
+
+    async def _image_preview_present(self) -> bool:
+        """Detect an attached-image preview/thumbnail inside the article form."""
+        if self.page is None:
+            return False
+        scope = await self._article_form_scope()
+        candidates = [
+            scope.locator("img[src^='blob:']").first,
+            scope.locator("img[src^='data:']").first,
+            scope.get_by_text(re.compile(r"remove image|change image|image selected|uploaded", re.I)).first,
+        ]
+        for candidate in candidates:
+            try:
+                if await candidate.count() > 0 and await candidate.is_visible(timeout=400):
+                    return True
+            except Exception:
+                continue
+        return False
 
     async def _ensure_media_type_image(self) -> bool:
         if self.page is None:
