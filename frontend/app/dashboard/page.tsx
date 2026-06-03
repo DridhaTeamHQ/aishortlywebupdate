@@ -192,18 +192,52 @@ export default function DashboardPage() {
   // ─── Derived state ────────────────────────────
   const isRunning = run ? ACTIVE_STATUSES.has(run.status) : false;
 
+  // Live 1s clock so the duration advances smoothly while a run is active,
+  // instead of only updating when a new event arrives.
+  const [nowTick, setNowTick] = useState(0);
+  useEffect(() => {
+    if (!isRunning) return;
+    const t = setInterval(() => setNowTick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [isRunning]);
+
   const runDuration = useMemo(() => {
-    if (!run?.started_at) return null;
-    const start = new Date(run.started_at).getTime();
-    const end = run.finished_at ? new Date(run.finished_at).getTime() : Date.now();
-    const seconds = Math.max(0, Math.floor((end - start) / 1000));
+    // Robust start time: prefer started_at, fall back to created_at, then the
+    // first event — so the clock is correct even before the worker stamps
+    // started_at.
+    const startMs = run?.started_at
+      ? new Date(run.started_at).getTime()
+      : run?.created_at
+        ? new Date(run.created_at).getTime()
+        : events.length
+          ? new Date(events[0].created_at).getTime()
+          : 0;
+    if (!startMs) return '0m 0s';
+    const endMs = run?.finished_at
+      ? new Date(run.finished_at).getTime()
+      : isRunning
+        ? Date.now()
+        : events.length
+          ? new Date(events[events.length - 1].created_at).getTime()
+          : Date.now();
+    const seconds = Math.max(0, Math.floor((endMs - startMs) / 1000));
     return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
-  }, [run?.started_at, run?.finished_at, events.length]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [run?.started_at, run?.created_at, run?.finished_at, events, isRunning, nowTick]);
 
   const publishedCount = useMemo(
     () => events.filter((e) => e.event_type === 'STEP_DONE' && e.payload?.step === 'publish' && e.payload?.ok).length,
     [events],
   );
+
+  // The run row can momentarily lag on "queued"; once events are flowing it is
+  // unambiguously running, so reflect that in the badge.
+  const displayStatus = useMemo(() => {
+    if (!run) return undefined;
+    if (run.finished_at || !ACTIVE_STATUSES.has(run.status)) return run.status;
+    if (run.status === 'queued' && events.length > 0) return 'running';
+    return run.status;
+  }, [run, events.length]);
 
   if (loading) {
     return (
@@ -239,7 +273,7 @@ export default function DashboardPage() {
             key={agent.id}
             agent={agent}
             isRunning={isRunning}
-            runStatus={run?.status}
+            runStatus={displayStatus}
             currentStep={run?.current_step || undefined}
             onStartRun={(category: string) => startRun(agent.id, category)}
             onStopRun={stopRun}
@@ -260,9 +294,9 @@ export default function DashboardPage() {
         <div className="card glass run-panel">
           <div className="run-header">
             <h3>◈ Current Run</h3>
-            <span className={`badge badge-${run.status}`}>
+            <span className={`badge badge-${displayStatus}`}>
               {isRunning && <span className="status-dot status-dot-running" />}
-              {run.status}
+              {displayStatus}
             </span>
           </div>
           <div className="run-stats">
@@ -278,7 +312,7 @@ export default function DashboardPage() {
             </div>
             <div className="run-stat">
               <div className="run-stat-icon">⏱️</div>
-              <div className="run-stat-value">{runDuration || '0m 0s'}</div>
+              <div className="run-stat-value">{runDuration}</div>
               <div className="run-stat-label">Duration</div>
             </div>
           </div>
