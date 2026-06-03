@@ -287,8 +287,8 @@ def _execute_run_supervised(run: Dict[str, Any]) -> None:
 
     while proc.poll() is None:
         status = _fetch_status(run_id)
-        if _shutdown or status == "stopping":
-            print(f"Stop requested for run {run_short}; terminating active job...")
+        if _shutdown or status in {"stopping", "cancelled"}:
+            print(f"Stop requested for run {run_short} (status={status}); terminating active job...")
             try:
                 proc.terminate()
                 proc.wait(timeout=5)
