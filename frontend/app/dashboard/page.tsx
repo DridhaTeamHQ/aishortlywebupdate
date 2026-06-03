@@ -94,6 +94,16 @@ export default function DashboardPage() {
         const eventsData = (data.events || []) as EventRow[];
         setEvents((prev) => (eventsData.length >= prev.length ? eventsData : prev));
 
+        // The run is over the moment a RUN_FINISHED event lands — stop polling
+        // even if the run row's status is lagging.
+        const lastEvent = eventsData[eventsData.length - 1];
+        if (lastEvent?.event_type === 'RUN_FINISHED') {
+          stopRequestedAtRef.current = null;
+          forceCancellingRef.current = false;
+          if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+          return;
+        }
+
         // Stale-run watchdog.
         if (runData?.status === 'stopping' || runData?.status === 'queued') {
           const lastEventTime = eventsData.length
@@ -190,7 +200,21 @@ export default function DashboardPage() {
   }, [activeRunId]);
 
   // ─── Derived state ────────────────────────────
-  const isRunning = run ? ACTIVE_STATUSES.has(run.status) : false;
+  // The event stream is the source of truth: a RUN_FINISHED event means the run
+  // is over, regardless of any lag in the run row's status field.
+  const finishedEvent = useMemo(() => {
+    for (let i = events.length - 1; i >= 0; i -= 1) {
+      if (events[i].event_type === 'RUN_FINISHED') return events[i];
+    }
+    return undefined;
+  }, [events]);
+  const finalStatus: string | undefined = finishedEvent?.payload?.status;
+
+  const isRunning = useMemo(() => {
+    if (finishedEvent) return false;
+    if (!run) return false;
+    return ACTIVE_STATUSES.has(run.status);
+  }, [finishedEvent, run]);
 
   // Live 1s clock so the duration advances smoothly while a run is active,
   // instead of only updating when a new event arrives.
@@ -213,31 +237,32 @@ export default function DashboardPage() {
           ? new Date(events[0].created_at).getTime()
           : 0;
     if (!startMs) return '0m 0s';
-    const endMs = run?.finished_at
-      ? new Date(run.finished_at).getTime()
-      : isRunning
-        ? Date.now()
-        : events.length
-          ? new Date(events[events.length - 1].created_at).getTime()
-          : Date.now();
+    const endMs = isRunning
+      ? Date.now()
+      : run?.finished_at
+        ? new Date(run.finished_at).getTime()
+        : finishedEvent
+          ? new Date(finishedEvent.created_at).getTime()
+          : events.length
+            ? new Date(events[events.length - 1].created_at).getTime()
+            : Date.now();
     const seconds = Math.max(0, Math.floor((endMs - startMs) / 1000));
     return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [run?.started_at, run?.created_at, run?.finished_at, events, isRunning, nowTick]);
+  }, [run?.started_at, run?.created_at, run?.finished_at, events, isRunning, nowTick, finishedEvent]);
 
   const publishedCount = useMemo(
     () => events.filter((e) => e.event_type === 'STEP_DONE' && e.payload?.step === 'publish' && e.payload?.ok).length,
     [events],
   );
 
-  // The run row can momentarily lag on "queued"; once events are flowing it is
-  // unambiguously running, so reflect that in the badge.
+  // Badge status: trust the RUN_FINISHED event first, then the run row.
   const displayStatus = useMemo(() => {
+    if (finishedEvent) return finalStatus || 'succeeded';
     if (!run) return undefined;
-    if (run.finished_at || !ACTIVE_STATUSES.has(run.status)) return run.status;
     if (run.status === 'queued' && events.length > 0) return 'running';
     return run.status;
-  }, [run, events.length]);
+  }, [finishedEvent, finalStatus, run, events.length]);
 
   if (loading) {
     return (
