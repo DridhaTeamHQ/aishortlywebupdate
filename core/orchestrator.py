@@ -764,6 +764,54 @@ class HardenedOrchestrator:
 
         return False
 
+    def _is_semantic_duplicate(self, title: str, body: str = "") -> bool:
+        """LLM gate: is this the same news event as something already published?
+
+        Fuzzy title matching misses the same story reworded by another source
+        (e.g. "Illegal mosque in Japan faces demolition" vs "Japan orders review
+        of illegally built mosque in Kawagoe"). This compares the candidate
+        against recently published headlines and asks the model for a verdict.
+        """
+        title = (title or "").strip()
+        if not title:
+            return False
+
+        recent = [t for t in (self._published_titles or []) if t and t.strip()]
+        if not recent:
+            return False
+
+        client = getattr(self.summarizer, "client", None)
+        if not client or not getattr(client, "available", False):
+            return False
+
+        # Bound the prompt: most recent titles are the likeliest collisions.
+        candidates = recent[-40:]
+        numbered = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(candidates))
+        lead = " ".join((body or "").split())[:240]
+        prompt = (
+            "You are deduplicating a news feed. Decide whether the NEW story reports the "
+            "SAME underlying real-world event as ANY of the EXISTING headlines — even if "
+            "worded differently, from another source, or covering a slightly different angle "
+            "of the same event.\n\n"
+            f"NEW headline: {title}\n"
+            + (f"NEW lead: {lead}\n" if lead else "")
+            + "\nEXISTING headlines:\n"
+            f"{numbered}\n\n"
+            "Answer with ONLY one token:\n"
+            "DUP  - if NEW is the same event as any EXISTING headline\n"
+            "NEW  - if NEW is a distinct event"
+        )
+
+        try:
+            raw = (client.generate_text(prompt, temperature=0, max_output_tokens=8) or "").strip().upper()
+            is_dup = raw.startswith("DUP")
+            if is_dup:
+                self.logger.info(f"dedup.semantic_match title={title[:60]}")
+            return is_dup
+        except Exception as exc:
+            self.logger.warning(f"Semantic dedup check failed (non-fatal): {exc}")
+            return False
+
     def _pop_with_source_backoff(
         self,
         pool: List[Tuple[object, object]],
@@ -1038,6 +1086,12 @@ class HardenedOrchestrator:
         if self._is_title_similar(summary["title"]):
             self.logger.info(f"skip.duplicate_title title={summary['title'][:60]} url={article.url}")
             return False, "duplicate_title", "", ""
+
+        # Semantic gate: catch the same event reworded by a different source/run,
+        # which fuzzy title matching cannot detect (different headline, same story).
+        if self._is_semantic_duplicate(summary["title"], summary.get("body", "")):
+            self.logger.info(f"skip.semantic_duplicate title={summary['title'][:60]} url={article.url}")
+            return False, "duplicate_story", "", ""
 
         category = self._decide_cms_category(article, summary["title"], summary["body"])
         image_search_query = self._build_image_query(article, summary["title"], category)

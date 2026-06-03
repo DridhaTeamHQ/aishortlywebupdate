@@ -257,19 +257,20 @@ export default function DashboardPage() {
           </div>
           <div className="run-stats">
             <div className="run-stat">
+              <div className="run-stat-icon">🚀</div>
               <div className="run-stat-value">{publishedCount}</div>
               <div className="run-stat-label">Published</div>
             </div>
             <div className="run-stat">
+              <div className="run-stat-icon">⚡</div>
               <div className="run-stat-value">{events.length}</div>
               <div className="run-stat-label">Events</div>
             </div>
-            {runDuration && (
-              <div className="run-stat">
-                <div className="run-stat-value">{runDuration}</div>
-                <div className="run-stat-label">Duration</div>
-              </div>
-            )}
+            <div className="run-stat">
+              <div className="run-stat-icon">⏱️</div>
+              <div className="run-stat-value">{runDuration || '0m 0s'}</div>
+              <div className="run-stat-label">Duration</div>
+            </div>
           </div>
         </div>
       )}
