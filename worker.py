@@ -210,7 +210,7 @@ def _execute_run_inline(run: Dict[str, Any]) -> None:
     print(f"  User:  {user_id[:8]}")
 
     def cancel_check() -> bool:
-        return _fetch_status(run_id) == "stopping"
+        return _fetch_status(run_id) in {"stopping", "cancelled"}
 
     def event_sink(event_type: str, payload: Dict[str, Any]) -> None:
         _emit_event(run_id, agent_id, user_id, event_type, payload)

@@ -162,21 +162,31 @@ export default function DashboardPage() {
 
   const stopRun = useCallback(async () => {
     if (!activeRunId) return;
-    const res = await fetch(`/api/runs/${activeRunId}/stop`, { method: 'POST' });
-    const payload = await res.json();
-    if (!res.ok) {
-      setDashboardError(payload.error || 'Failed to stop run.');
+    try {
+      const res = await fetch(`/api/runs/${activeRunId}/stop`, { method: 'POST' });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setDashboardError(payload.error || 'Failed to stop run.');
+        return;
+      }
+    } catch {
+      setDashboardError('Failed to stop run.');
       return;
     }
+
+    // Stop is final: tear down polling and flip the UI back to idle immediately,
+    // independent of any in-flight events from the winding-down worker.
     setDashboardError(null);
-    if (payload.status === 'stopping') stopRequestedAtRef.current = Date.now();
-    else { stopRequestedAtRef.current = null; forceCancellingRef.current = false; }
+    stopRequestedAtRef.current = null;
+    forceCancellingRef.current = false;
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
     setRun((prev) => prev ? {
       ...prev,
-      status: payload.status || 'stopping',
-      current_step: payload.status === 'cancelled' ? 'cancelled' : prev.current_step,
-      finished_at: payload.status === 'cancelled' ? new Date().toISOString() : prev.finished_at,
+      status: 'cancelled',
+      current_step: 'cancelled',
+      finished_at: new Date().toISOString(),
     } : prev);
+    setActiveRunId(null);
   }, [activeRunId]);
 
   // ─── Derived state ────────────────────────────
