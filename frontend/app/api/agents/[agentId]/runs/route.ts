@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server';
 import { getServiceClient, getUserFromRequest } from '../../../../../lib/supabase-server';
 
-const QUEUE_STALE_MS = 45_000;
-const STOP_STALE_MS = 15_000;
-const RUN_STALE_MS = 10 * 60 * 1000;
+const QUEUE_STALE_MS = 3 * 60_000;     // 3 min — give Railway worker time to wake up
+const STOP_STALE_MS = 30_000;
+const RUN_STALE_MS = 15 * 60_000;
 
 type ActiveRun = {
   id: string;

@@ -33,15 +33,21 @@ class ArticleData:
 
 
 class CMSPublisher:
+    # Live CMS categories: Assembly Elections, Technology, Lifestyle, State,
+    # International, National, Entertainment, Finance, Sports.
+    # Aliases provide graceful fallbacks if a legacy label slips through.
     CATEGORY_ALIASES = {
         "Technology": ["Tech"],
         "Tech": ["Technology"],
-        "Business": ["Finance"],
         "Finance": ["Business"],
-        "Environment": ["Lifestyle", "International"],
-        "Lifestyle": ["Environment"],
+        "Business": ["Finance"],
+        "Assembly Elections": ["Politics", "National"],
+        "Politics": ["Assembly Elections", "National"],
         "National": ["State"],
         "State": ["National"],
+        "Lifestyle": ["Health", "Entertainment"],
+        "Entertainment": ["Lifestyle"],
+        "Environment": ["Lifestyle", "National"],
     }
 
     SCREENSHOT_DIR = Path("screenshots")
@@ -208,15 +214,31 @@ class CMSPublisher:
         if "/articles" in url and "create" not in url and "new" not in url:
             return True
 
-        checks = [
+        # Strong, single-signal markers from the redesigned newsroom dashboard.
+        strong = [
+            self.page.get_by_role("button", name=re.compile(r"create article", re.I)).first,
+            self.page.locator("text='Article Management'").first,
             self.page.locator("text='Articles Management'").first,
-            self.page.locator("text='Create Article'").first,
+            self.page.locator("text='Editorial Command Center'").first,
+        ]
+        for loc in strong:
+            try:
+                if await loc.count() > 0 and await loc.is_visible(timeout=700):
+                    return True
+            except Exception:
+                pass
+
+        # Weak markers — require two together.
+        weak = [
+            self.page.locator("text='All Articles'").first,
+            self.page.locator("text='All Status'").first,
             self.page.locator("table").first,
+            self.page.locator("text='Advanced Filters'").first,
         ]
         visible_count = 0
-        for loc in checks:
+        for loc in weak:
             try:
-                if await loc.count() > 0 and await loc.is_visible(timeout=900):
+                if await loc.count() > 0 and await loc.is_visible(timeout=600):
                     visible_count += 1
             except Exception:
                 pass
@@ -425,10 +447,13 @@ class CMSPublisher:
 
         create_candidates = [
             self.page.get_by_role("button", name=re.compile(r"create article", re.I)).first,
+            self.page.get_by_role("link", name=re.compile(r"create article", re.I)).first,
             self.page.locator("main").get_by_role("button", name=re.compile(r"create article", re.I)).first,
             self.page.locator("button:has-text('Create Article')").first,
+            self.page.locator("a:has-text('Create Article')").first,
+            self.page.locator("[data-testid='create-article']").first,
             self.page.locator("text='Create Article'").first.locator(
-                "xpath=ancestor::*[self::button or self::a][1]"
+                "xpath=ancestor-or-self::*[self::button or self::a or @role='button'][1]"
             ),
         ]
         for candidate in create_candidates:
@@ -533,6 +558,11 @@ class CMSPublisher:
         for attempt in range(3):
             await self._wait_stable()
 
+            # The redesigned dashboard exposes "Create Article" globally, so try the
+            # modal directly before navigating into Articles Management.
+            if await self._open_create_article_modal():
+                return True
+
             if await self._open_articles_management():
                 if await self._open_create_article_modal():
                     return True
@@ -630,14 +660,21 @@ class CMSPublisher:
                 self.page.locator(
                     f"xpath=(//*[@role='listbox']//*[normalize-space()='{name}'])[1]"
                 ).first,
+                # Radix/headless popper content (new CMS uses a floating panel).
+                self.page.locator(
+                    f"xpath=(//*[@data-radix-popper-content-wrapper or @role='menu' or contains(@class,'popover') or contains(@class,'dropdown')]//*[normalize-space()='{name}'])[1]"
+                ).first,
                 self.page.locator(
                     f"xpath=((//*[contains(@class,'overflow-y-auto') or contains(@class,'overflow-auto')])[last()]//*[normalize-space()='{name}'])[1]"
                 ).first,
+                # Any visible element whose entire text is exactly the category name.
+                self.page.locator(f"xpath=(//*[normalize-space(text())='{name}'])[last()]").first,
+                self.page.locator(f"text=/^\\s*{escaped}\\s*$/i").last,
                 self.page.locator(f"text=/{escaped}/i").last,
             ]
             for candidate in candidates:
                 try:
-                    if await candidate.count() > 0:
+                    if await candidate.count() > 0 and await candidate.is_visible(timeout=400):
                         return candidate
                 except Exception:
                     continue

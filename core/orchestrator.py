@@ -20,14 +20,50 @@ from core.validator import ArticleValidator
 from utils.logger import get_logger
 
 
+# The CMS exposes exactly these category labels. Everything we publish MUST
+# resolve to one of these or the category dropdown selection will fail.
+VALID_CMS_CATEGORIES = {
+    "Assembly Elections",
+    "Technology",
+    "Lifestyle",
+    "State",
+    "International",
+    "National",
+    "Entertainment",
+    "Finance",
+    "Sports",
+}
+
 PIPELINE_TO_CMS_CATEGORY = {
-    "business": "Business",
+    "business": "Finance",
     "tech": "Technology",
     "international": "International",
     "national": "National",
-    "politics": "Politics",
+    "politics": "National",   # CMS has no Politics desk → file under National
     "sports": "Sports",
 }
+
+
+def sanitize_cms_category(value: str) -> str:
+    """Coerce any category string to a valid CMS label (default National)."""
+    raw = (value or "").strip()
+    if raw in VALID_CMS_CATEGORIES:
+        return raw
+    lowered = raw.lower()
+    # Map legacy / regional / removed labels onto the live CMS set.
+    legacy = {
+        "business": "Finance",
+        "politics": "National",
+        "crime": "National",
+        "health": "Lifestyle",
+        "education": "National",
+        "environment": "Lifestyle",
+        "spiritual": "Lifestyle",
+        "telangana": "State",
+        "andhra pradesh": "State",
+        "tech": "Technology",
+    }
+    return legacy.get(lowered, "National")
 
 STOPWORDS = {
     "the", "and", "with", "from", "into", "amid", "over", "after", "near", "their", "this", "that", "will",
@@ -836,13 +872,6 @@ class HardenedOrchestrator:
             marker in text for marker in ("andhra pradesh", "amaravati", "visakhapatnam", "vijayawada", "tirupati", "guntur")
         )
 
-        env_signal = any(
-            kw in text
-            for kw in (
-                "environment", "climate", "wildlife", "ecology", "ecological", "conservation", "biodiversity",
-                "habitat", "restoration", "forest", "nature", "species",
-            )
-        )
         tech_signal = any(
             kw in text
             for kw in (
@@ -857,38 +886,29 @@ class HardenedOrchestrator:
             source=getattr(article, "source", ""),
             pipeline_hint=hint,
         )
-        if not decided:
-            decided = fallback
+        decided = sanitize_cms_category(decided) if decided else fallback
 
-        if hint == "environment" and env_signal:
-            return "Environment"
-        if hint == "tech" and tech_signal:
-            return "Technology"
-        if telangana_signal:
-            return "Telangana"
-        if andhra_signal:
-            return "Andhra Pradesh"
+        # ── Resolve to a live CMS label only ──────────────────────────────
+        result: str
 
-        if hint == "international" and source_has_world_section and not explicit_india_context:
-            return "International"
+        if hint == "tech" or tech_signal:
+            result = "Technology"
+        elif hint == "sports":
+            result = "Sports"
+        elif hint == "business":
+            result = "Finance"
+        elif telangana_signal or andhra_signal:
+            # Regional Indian coverage → CMS "State" desk
+            result = "State"
+        elif hint == "international" and not india_context:
+            result = "International"
+        elif india_context:
+            # Indian-context stories should not sit in International/State buckets
+            result = "National" if decided in {"International", "State"} else decided
+        else:
+            result = decided or "International"
 
-        # Keep international pipeline items in International unless they came from India-specific sources/urls.
-        if hint == "international" and not india_context:
-            return "International"
-
-        if india_context:
-            if decided in {"International", "State"}:
-                return "National"
-            return decided
-
-        if not india_context:
-            if env_signal:
-                return "Environment"
-            if tech_signal:
-                return "Technology"
-            return "International"
-
-        return decided
+        return sanitize_cms_category(result)
     def _build_hashtags(self, category: str, title: str, is_breaking: bool) -> str:
         category_low = category.strip().lower()
         tags: List[str] = []

@@ -14,33 +14,25 @@ from utils.logger import get_logger
 class CategoryDecider:
     """Classifies article content into CMS category labels with India-context guardrails."""
 
+    # Locked to the live CMS category set. Nothing else may be emitted.
     VALID_CATEGORIES = [
+        "Assembly Elections",
         "Technology",
-        "Crime",
-        "Education",
-        "Business",
-        "Finance",
-        "Health",
-        "Andhra Pradesh",
-        "Telangana",
+        "Lifestyle",
         "State",
         "International",
         "National",
-        "Politics",
-        "Sports",
         "Entertainment",
-        "Lifestyle",
-        "Environment",
-        "Spiritual",
+        "Finance",
+        "Sports",
     ]
 
     PIPELINE_HINT_MAP = {
-        "business": "Business",
+        "business": "Finance",
         "tech": "Technology",
         "international": "International",
         "national": "National",
-        "environment": "Environment",
-        "crime": "Crime",
+        "politics": "National",   # CMS has no generic Politics desk
         "sports": "Sports",
     }
 
@@ -59,9 +51,19 @@ class CategoryDecider:
     )
     GLOBAL_SOURCE_HINTS = ("guardian", "bbc", "reuters", "aljazeera", "al jazeera", "cnn", "associated press", "ap")
 
-    ENVIRONMENT_KEYWORDS = [
-        "environment", "climate", "wildlife", "ecology", "ecological", "forest", "biodiversity", "habitat",
-        "conservation", "restore", "restoration", "species", "nature", "pollution", "emission", "sustainability",
+    ELECTION_KEYWORDS = [
+        "assembly election", "assembly polls", "assembly elections", "lok sabha election", "general election",
+        "by-election", "bypoll", "by-poll", "vote count", "counting of votes", "exit poll", "election commission",
+        "poll campaign", "election rally", "voter turnout", "constituency", "candidate list", "manifesto",
+        "nomination filed", "ballot",
+    ]
+    ENTERTAINMENT_KEYWORDS = [
+        "movie", "film", "box office", "trailer", "teaser", "actor", "actress", "bollywood", "tollywood",
+        "hollywood", "ott", "web series", "song", "album", "celebrity", "cinema", "director", "release date",
+    ]
+    LIFESTYLE_KEYWORDS = [
+        "health", "wellness", "fitness", "diet", "recipe", "food", "travel", "tourism", "fashion", "beauty",
+        "lifestyle", "yoga", "mental health", "skincare", "relationship", "parenting",
     ]
     TECH_KEYWORDS = [
         "technology", "tech", "artificial intelligence", " ai ", "software", "chip", "semiconductor", "cyber", "internet",
@@ -97,33 +99,28 @@ Body: {body[:1200]}
 Source: {source}
 Pipeline hint: {pipeline_hint or "none"}
 
-Allowed categories (use exact text):
+Allowed categories (use exact text, choose ONLY from this list):
+- Assembly Elections
 - Technology
-- Crime
-- Education
-- Business
-- Finance
-- Health
-- Andhra Pradesh
-- Telangana
+- Lifestyle
 - State
 - International
 - National
-- Politics
-- Sports
 - Entertainment
-- Lifestyle
-- Environment
-- Spiritual
+- Finance
+- Sports
 
 Rules:
-1) India domestic governance/policy/civic updates -> National or Politics.
-2) Non-India geopolitical/world events -> International.
-3) Wildlife/climate/ecology/conservation -> Environment.
-4) AI/technology/product/regulation stories -> Technology.
-5) Business/economy/markets/companies -> Business or Finance.
-6) Use Andhra Pradesh/Telangana only for clearly state-specific stories.
-7) Do not return National/State for UK/US/Europe/global stories unless explicitly India-focused.
+1) India domestic governance/policy/civic updates -> National.
+2) Indian election / assembly / party-poll campaign coverage -> Assembly Elections.
+3) Non-India geopolitical/world events -> International.
+4) Clearly state-specific Indian stories (Telangana, Andhra, single-state focus) -> State.
+5) AI/technology/product/regulation stories -> Technology.
+6) Business/economy/markets/companies/banking -> Finance.
+7) Movies/celebrity/music/TV/OTT -> Entertainment.
+8) Health/food/travel/wellness/culture features -> Lifestyle.
+9) Sports of any kind -> Sports.
+10) Do not return National/State for UK/US/Europe/global stories unless explicitly India-focused.
 
 Return only the category name."""
 
@@ -183,37 +180,37 @@ Return only the category name."""
         source_low = (source or "").strip().lower()
         state_override = self._state_override(text)
         india_context = self._is_india_context(text, source_low)
-        env_signal = self._contains_any(text, self.ENVIRONMENT_KEYWORDS)
+        election_signal = self._contains_any(text, self.ELECTION_KEYWORDS)
         tech_signal = self._contains_any(text, self.TECH_KEYWORDS)
         business_signal = self._contains_any(text, self.BUSINESS_KEYWORDS)
 
+        # Hard hint overrides first.
+        if pipeline_hint == "tech" or tech_signal:
+            return "Technology"
+        if pipeline_hint == "business" or business_signal:
+            return "Finance"
+        if pipeline_hint == "sports":
+            return "Sports"
+
+        # Indian election/poll coverage gets the dedicated CMS desk.
+        if election_signal and india_context:
+            return "Assembly Elections"
+
+        # Regional Indian stories → State.
         if state_override:
             return state_override
 
-        if pipeline_hint == "environment" and env_signal:
-            return "Environment"
-        if pipeline_hint == "tech" and tech_signal:
-            return "Technology"
-        if pipeline_hint == "business" and business_signal:
-            return "Business"
-
         if self._is_india_source(source_low):
             if decided in {"International", "State"}:
-                return heuristic if heuristic in {"National", "Politics", "Telangana", "Andhra Pradesh", "Crime", "Business", "Finance"} else "National"
+                return heuristic if heuristic in {"National", "State", "Finance", "Sports", "Entertainment", "Lifestyle"} else "National"
 
-        if not india_context and decided in {"National", "State", "Andhra Pradesh", "Telangana"}:
-            if env_signal:
-                return "Environment"
-            if tech_signal:
-                return "Technology"
-            if business_signal:
-                return "Business"
-            if heuristic in {"International", "Technology", "Environment", "Business", "Finance", "Sports", "Crime", "Health", "Entertainment"}:
+        if not india_context and decided in {"National", "State"}:
+            if heuristic in {"International", "Technology", "Finance", "Sports", "Entertainment", "Lifestyle"}:
                 return heuristic
             return "International"
 
         if decided == "International" and india_context:
-            if heuristic in {"Politics", "National", "Telangana", "Andhra Pradesh"}:
+            if heuristic in {"National", "State", "Assembly Elections"}:
                 return heuristic
             return "National"
 
@@ -223,16 +220,7 @@ Return only the category name."""
         if pipeline_hint == "international" and decided in {"National", "State"} and not india_context:
             return "International"
 
-        if env_signal and decided in {"International", "National", "Lifestyle"}:
-            return "Environment"
-
-        if tech_signal and decided in {"Politics", "International", "National"}:
-            return "Technology"
-
-        if business_signal and decided in {"International", "National"}:
-            return "Business"
-
-        return decided
+        return decided if decided in self.VALID_CATEGORIES else (heuristic or "National")
 
     def _is_india_source(self, source_low: str) -> bool:
         source_norm = (source_low or "").strip().lower()
@@ -254,13 +242,7 @@ Return only the category name."""
 
     def _heuristic_decide(self, title: str, body: str, source: str, pipeline_hint: str) -> str:
         text = f" {title} {body} ".lower()
-
-        state_override = self._state_override(text)
-        if state_override:
-            return state_override
-
-        if self._contains_any(text, self.ENVIRONMENT_KEYWORDS):
-            return "Environment"
+        is_india_context = self._is_india_context(text, (source or "").strip().lower())
 
         if self._contains_any(text, self.TECH_KEYWORDS):
             return "Technology"
@@ -268,22 +250,23 @@ Return only the category name."""
         if any(k in text for k in ["cricket", "football", "soccer", "tennis", "badminton", "hockey", "olympic", "world cup", "tournament", "match", "coach", "player", "goal"]):
             return "Sports"
 
-        if any(k in text for k in ["murder", "arrest", "crime", "police", "fraud", "court", "investigation", "assault"]):
-            return "Crime"
+        # Indian election coverage → dedicated desk; only when clearly poll-related.
+        if self._contains_any(text, self.ELECTION_KEYWORDS) and is_india_context:
+            return "Assembly Elections"
 
-        if any(k in text for k in ["hospital", "health", "disease", "medical", "doctor", "vaccine"]):
-            return "Health"
-
-        if any(k in text for k in ["school", "college", "university", "exam", "education", "student"]):
-            return "Education"
+        if self._contains_any(text, self.ENTERTAINMENT_KEYWORDS):
+            return "Entertainment"
 
         if self._contains_any(text, self.BUSINESS_KEYWORDS):
-            return "Business"
+            return "Finance"
 
-        if any(k in text for k in ["election", "parliament", "assembly", "minister", "party", "rajya sabha", "lok sabha", "government"]):
-            return "Politics"
+        if self._contains_any(text, self.LIFESTYLE_KEYWORDS):
+            return "Lifestyle"
 
-        is_india_context = self._is_india_context(text, (source or "").strip().lower())
+        # Single-state Indian focus → State.
+        state_override = self._state_override(text)
+        if state_override:
+            return state_override
 
         if pipeline_hint and pipeline_hint in self.PIPELINE_HINT_MAP:
             hinted = self.PIPELINE_HINT_MAP[pipeline_hint]
@@ -297,8 +280,9 @@ Return only the category name."""
         return "National" if is_india_context else "International"
 
     def _state_override(self, text: str) -> str:
+        # The live CMS has a single "State" desk (no per-state labels).
         if any(keyword in text for keyword in self.TELANGANA_KEYWORDS):
-            return "Telangana"
+            return "State"
         if any(keyword in text for keyword in self.ANDHRA_KEYWORDS):
-            return "Andhra Pradesh"
+            return "State"
         return ""

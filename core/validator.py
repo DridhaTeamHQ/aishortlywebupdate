@@ -43,24 +43,17 @@ RECOVERY_MATRIX = {
 }
 
 
+# Must mirror the live CMS category set exactly.
 VALID_CATEGORIES = [
+    "Assembly Elections",
     "Technology",
-    "Crime",
-    "Education",
-    "Environment",
-    "Finance",
-    "Health",
-    "Andhra Pradesh",
-    "Telangana",
+    "Lifestyle",
     "State",
     "International",
     "National",
-    "Politics",
-    "Sports",
     "Entertainment",
-    "Lifestyle",
-    "Spiritual",
-    "Business",
+    "Finance",
+    "Sports",
 ]
 
 

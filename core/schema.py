@@ -10,16 +10,16 @@ from dataclasses import dataclass
 from enum import Enum
 
 class Category(str, Enum):
-    NATIONAL = "National"
-    INTERNATIONAL = "International"
-    POLITICS = "Politics"
-    SPORTS = "Sports"
-    BUSINESS = "Business"
-    ENTERTAINMENT = "Entertainment"
-    SPIRITUAL = "Spiritual"
+    # Mirrors the live CMS category set exactly.
+    ASSEMBLY_ELECTIONS = "Assembly Elections"
     TECHNOLOGY = "Technology"
-    HEALTH = "Health"
     LIFESTYLE = "Lifestyle"
+    STATE = "State"
+    INTERNATIONAL = "International"
+    NATIONAL = "National"
+    ENTERTAINMENT = "Entertainment"
+    FINANCE = "Finance"
+    SPORTS = "Sports"
 
 class ContentBlock(TypedDict):
     headline: str  # validated length
