@@ -285,21 +285,37 @@ def _execute_run_supervised(run: Dict[str, Any]) -> None:
         env=child_env,
     )
 
+    def _terminate_child() -> None:
+        try:
+            proc.terminate()
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+        except Exception as exc:
+            print(f"Failed to terminate child process cleanly: {exc}")
+
     while proc.poll() is None:
         status = _fetch_status(run_id)
-        if _shutdown or status in {"stopping", "cancelled"}:
-            print(f"Stop requested for run {run_short} (status={status}); terminating active job...")
-            try:
-                proc.terminate()
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait(timeout=5)
-            except Exception as exc:
-                print(f"Failed to terminate child process cleanly: {exc}")
 
+        # User-initiated stop wins: terminate and finalize as cancelled.
+        if status in {"stopping", "cancelled"}:
+            print(f"Stop requested for run {run_short} (status={status}); terminating active job...")
+            _terminate_child()
             _finalize_if_needed(run_id, agent_id, user_id, "cancelled")
             print(f"\nRun {run_short} cancelled")
+            print("-" * 40)
+            return
+
+        # Worker is being replaced (deploy / SIGTERM): don't kill the user's run —
+        # requeue it so the next worker instance resumes it.
+        if _shutdown:
+            print(f"Worker shutting down; requeuing run {run_short} for the next instance...")
+            _terminate_child()
+            current = _fetch_status(run_id)
+            if current not in {"succeeded", "failed", "cancelled"}:
+                _update_run(run_id, {"status": "queued", "current_step": "queued", "started_at": None})
+            print(f"\nRun {run_short} requeued")
             print("-" * 40)
             return
 
