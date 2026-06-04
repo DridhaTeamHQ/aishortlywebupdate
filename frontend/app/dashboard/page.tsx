@@ -1,9 +1,11 @@
 'use client';
 
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import AgentCard, { Agent } from '../../components/AgentCard';
 import LiveLog from '../../components/LiveLog';
 import ThemeToggle from '../../components/ThemeToggle';
+import { supabase } from '../../lib/supabase';
 
 type RunRow = {
   id: string;
@@ -27,21 +29,56 @@ const STOP_STALE_MS = 30000;
 const QUEUE_STALE_MS = 3 * 60000;
 
 export default function DashboardPage() {
+  const router = useRouter();
   const [agents, setAgents] = useState<Agent[]>([]);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [run, setRun] = useState<RunRow | null>(null);
   const [events, setEvents] = useState<EventRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [dashboardError, setDashboardError] = useState<string | null>(null);
+  const [userEmail, setUserEmail] = useState<string>('');
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const stopRequestedAtRef = useRef<number | null>(null);
   const forceCancellingRef = useRef(false);
+
+  // Authenticated fetch — attaches the current Supabase access token.
+  const authFetch = useCallback(async (input: string, init?: RequestInit) => {
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token;
+    if (!token) {
+      router.replace('/login');
+      throw new Error('Not authenticated');
+    }
+    const headers = { ...(init?.headers || {}), Authorization: `Bearer ${token}` };
+    return fetch(input, { ...init, cache: 'no-store', headers });
+  }, [router]);
+
+  const signOut = useCallback(async () => {
+    await supabase.auth.signOut();
+    router.replace('/login');
+  }, [router]);
+
+  // ─── Auth guard ──────
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      if (!data.session) {
+        router.replace('/login');
+      } else {
+        setUserEmail(data.session.user.email || '');
+      }
+    });
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!session) router.replace('/login');
+      else setUserEmail(session.user.email || '');
+    });
+    return () => { listener.subscription.unsubscribe(); };
+  }, [router]);
 
   // ─── Load agents + detect any active run ──────
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch('/api/agents', { cache: 'no-store' });
+        const res = await authFetch('/api/agents');
         const payload = await res.json();
         if (!res.ok) throw new Error(payload.error || 'Unable to load agents');
 
@@ -51,7 +88,7 @@ export default function DashboardPage() {
         setLoading(false);
 
         if (list.length) {
-          const arRes = await fetch(`/api/agents/${list[0].id}/active-run`, { cache: 'no-store' });
+          const arRes = await authFetch(`/api/agents/${list[0].id}/active-run`);
           const arData = await arRes.json();
           if (arRes.ok && arData.run) {
             setActiveRunId(arData.run.id);
@@ -60,11 +97,11 @@ export default function DashboardPage() {
           }
         }
       } catch (error: any) {
-        setDashboardError(error.message);
+        if (error?.message !== 'Not authenticated') setDashboardError(error.message);
         setLoading(false);
       }
     })();
-  }, []);
+  }, [authFetch]);
 
   // ─── Poll run status + events via API ──────
   useEffect(() => {
@@ -75,7 +112,7 @@ export default function DashboardPage() {
 
     const poll = async () => {
       try {
-        const res = await fetch(`/api/runs/${activeRunId}`, { cache: 'no-store' });
+        const res = await authFetch(`/api/runs/${activeRunId}`);
         if (res.status === 404) {
           setRun(null);
           setEvents([]);
@@ -118,7 +155,7 @@ export default function DashboardPage() {
           const staleLimit = runData.status === 'queued' ? QUEUE_STALE_MS : STOP_STALE_MS;
           if (!forceCancellingRef.current && runActivityTime > 0 && Date.now() - runActivityTime >= staleLimit) {
             forceCancellingRef.current = true;
-            const r = await fetch(`/api/runs/${activeRunId}/stop?force=1`, { method: 'POST' });
+            const r = await authFetch(`/api/runs/${activeRunId}/stop?force=1`, { method: 'POST' });
             const p = await r.json();
             if (r.ok) {
               setRun((prev) => prev ? { ...prev, status: p.status || 'cancelled', current_step: 'cancelled', finished_at: new Date().toISOString() } : prev);
@@ -141,14 +178,14 @@ export default function DashboardPage() {
     poll();
     pollRef.current = setInterval(poll, POLL_INTERVAL);
     return () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
-  }, [activeRunId]);
+  }, [activeRunId, authFetch]);
 
   // ─── Handlers ─────────────────────────────────
   const startRun = useCallback(async (agentId: string, category: string = 'all') => {
     if (run && ACTIVE_STATUSES.has(run.status)) {
       throw new Error('An agent run is already active.');
     }
-    const res = await fetch(`/api/agents/${agentId}/runs`, {
+    const res = await authFetch(`/api/agents/${agentId}/runs`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ category }),
@@ -168,12 +205,12 @@ export default function DashboardPage() {
       started_at: null,
       finished_at: null,
     });
-  }, [run]);
+  }, [run, authFetch]);
 
   const stopRun = useCallback(async () => {
     if (!activeRunId) return;
     try {
-      const res = await fetch(`/api/runs/${activeRunId}/stop`, { method: 'POST' });
+      const res = await authFetch(`/api/runs/${activeRunId}/stop`, { method: 'POST' });
       const payload = await res.json().catch(() => ({}));
       if (!res.ok) {
         setDashboardError(payload.error || 'Failed to stop run.');
@@ -197,7 +234,7 @@ export default function DashboardPage() {
       finished_at: new Date().toISOString(),
     } : prev);
     setActiveRunId(null);
-  }, [activeRunId]);
+  }, [activeRunId, authFetch]);
 
   // ─── Derived state ────────────────────────────
   // The event stream is the source of truth: a RUN_FINISHED event means the run
@@ -286,7 +323,11 @@ export default function DashboardPage() {
             <span className="navbar-sub">▸ PLAYER 1 · NEWS BOT</span>
           </div>
         </div>
-        <ThemeToggle />
+        <div className="navbar-actions">
+          {userEmail && <span className="navbar-user" title={userEmail}>{userEmail}</span>}
+          <ThemeToggle />
+          <button type="button" className="navbar-signout" onClick={signOut}>SIGN OUT</button>
+        </div>
       </nav>
 
       {dashboardError && <div className="form-error">{dashboardError}</div>}

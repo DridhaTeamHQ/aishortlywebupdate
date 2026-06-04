@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getServiceClient } from '../../../../../lib/supabase-server';
+import { getServiceClient, getUserFromRequest } from '../../../../../lib/supabase-server';
 
 const ORPHAN_RUN_MAX_AGE_MS = 10 * 60 * 1000;
 
@@ -10,10 +10,15 @@ function toMillis(value: string | null | undefined): number {
 }
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: { agentId: string } },
 ) {
   try {
+    const user = await getUserFromRequest(request);
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     const sb = getServiceClient();
     const { data: runs } = await sb
       .from('agent_runs')

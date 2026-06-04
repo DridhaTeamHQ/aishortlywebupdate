@@ -1,11 +1,16 @@
 import { NextResponse } from 'next/server';
-import { getServiceClient } from '../../../../../lib/supabase-server';
+import { getServiceClient, getUserFromRequest } from '../../../../../lib/supabase-server';
 
 export async function POST(
   request: Request,
   { params }: { params: { runId: string } },
 ) {
   try {
+    const user = await getUserFromRequest(request);
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     const sb = getServiceClient();
     const runId = params.runId;
     const { searchParams } = new URL(request.url);

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getServiceClient, resolveActor } from '../../../../../lib/supabase-server';
+import { getServiceClient, getActorFromRequest } from '../../../../../lib/supabase-server';
 
 const QUEUE_STALE_MS = 3 * 60_000;     // 3 min — give Railway worker time to wake up
 const STOP_STALE_MS = 30_000;
@@ -84,9 +84,9 @@ export async function POST(
   { params }: { params: { agentId: string } },
 ) {
   try {
-    const actor = await resolveActor();
+    const actor = await getActorFromRequest(request);
     if (!actor) {
-      return NextResponse.json({ error: 'No org/profile configured' }, { status: 500 });
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     const sb = getServiceClient();

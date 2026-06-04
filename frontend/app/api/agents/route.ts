@@ -1,11 +1,11 @@
 import { NextResponse } from 'next/server';
-import { getServiceClient, resolveActor } from '../../../lib/supabase-server';
+import { getServiceClient, getActorFromRequest } from '../../../lib/supabase-server';
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const actor = await resolveActor();
+    const actor = await getActorFromRequest(request);
     if (!actor) {
-      return NextResponse.json({ error: 'No org/profile configured' }, { status: 500 });
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     const sb = getServiceClient();

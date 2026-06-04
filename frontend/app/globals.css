@@ -179,6 +179,21 @@ h3 { font-size: 13px; letter-spacing: 1px; color: var(--accent); text-shadow: va
 .navbar-brand-text { display: flex; flex-direction: column; gap: 6px; }
 .navbar-title { font-size: 15px; letter-spacing: 1px; color: var(--accent); text-shadow: var(--glow); }
 .navbar-sub { font-size: 16px; color: var(--muted); font-family: var(--term); letter-spacing: 1px; }
+.navbar-actions { display: flex; align-items: center; gap: 14px; }
+.navbar-user {
+  font-family: var(--term); font-size: 16px; color: var(--muted); letter-spacing: 0.5px;
+  max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.navbar-signout {
+  font-family: var(--pixel); font-size: 9px; letter-spacing: 1px;
+  color: var(--ink); cursor: pointer;
+  padding: 9px 12px; background: var(--panel-2);
+  border: 3px solid var(--line); box-shadow: 3px 3px 0 var(--shadow-col);
+  transition: transform var(--transition), box-shadow var(--transition), background var(--transition);
+}
+.navbar-signout:hover { background: var(--c-magenta); color: #fff; }
+.navbar-signout:active { transform: translate(3px, 3px); box-shadow: 0 0 0 var(--shadow-col); }
+[data-theme='light'] .navbar-signout:hover { background: var(--c-magenta); color: #fff; }
 
 /* ── Theme toggle ────────────────────────────────────────────── */
 .theme-toggle { background: none; border: none; cursor: pointer; padding: 0; }
@@ -389,12 +404,58 @@ label {
   padding: 14px 0 0;
 }
 
+/* ── Login ───────────────────────────────────────────────────── */
+.login-page {
+  min-height: 100vh;
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+}
+.login-card {
+  width: 100%; max-width: 420px;
+  display: flex; flex-direction: column; gap: 16px;
+  animation: fadeUp 0.3s steps(4) both;
+}
+.login-header { text-align: center; margin-bottom: 4px; }
+.login-logo {
+  width: 56px; height: 56px; margin: 0 auto 16px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 26px;
+  background: var(--accent); color: var(--bg);
+  border: 3px solid var(--line); box-shadow: 4px 4px 0 var(--shadow-col);
+  animation: blink 1.6s steps(1) infinite;
+}
+[data-theme='light'] .login-logo { animation: none; }
+.login-title { font-family: var(--pixel); font-size: 18px; letter-spacing: 1px; color: var(--accent); text-shadow: var(--glow); }
+.login-subtitle { font-family: var(--term); font-size: 17px; letter-spacing: 1px; color: var(--muted); margin-top: 10px; }
+.login-field { display: flex; flex-direction: column; gap: 8px; }
+.login-input {
+  width: 100%; padding: 13px 14px;
+  background: var(--bg); color: var(--ink);
+  border: 3px solid var(--line); box-shadow: inset 0 0 0 2px var(--panel);
+  font-family: var(--term); font-size: 19px; letter-spacing: 0.5px;
+  outline: none; transition: box-shadow var(--transition);
+}
+.login-input::placeholder { color: var(--muted); }
+.login-input:focus { box-shadow: inset 0 0 0 2px var(--accent); border-color: var(--accent); }
+.login-notice {
+  background: var(--bg); border: 3px solid var(--accent); color: var(--accent);
+  padding: 12px 14px; font-family: var(--term); font-size: 17px; letter-spacing: 0.5px;
+}
+.login-switch {
+  background: none; border: none; cursor: pointer;
+  color: var(--accent-2); font-family: var(--pixel); font-size: 9px; letter-spacing: 1px;
+  text-align: center; padding: 8px; margin-top: 2px;
+}
+.login-switch:hover { color: var(--accent); text-shadow: var(--glow); }
+
 /* ── Responsive ──────────────────────────────────────────────── */
 @media (max-width: 700px) {
   body { font-size: 18px; }
   .page-wrap { padding: 18px 12px 48px; gap: 16px; }
   .grid-2 { grid-template-columns: 1fr; }
   .navbar-sub { display: none; }
+  .navbar-user { display: none; }
+  .navbar-actions { gap: 8px; }
   .run-stats { gap: 10px; }
   .run-stat-value { font-size: 16px; }
   .btn { font-size: 11px; }
