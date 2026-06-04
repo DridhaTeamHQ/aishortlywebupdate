@@ -901,10 +901,27 @@ Headline style patterns (factual, high-click, non-clickbait):
         similarity = SequenceMatcher(None, " ".join(clean_title), " ".join(clean_source)).ratio()
         return similarity >= 0.82
 
+    # Attributive adjectives / quantifiers that essentially never end a real
+    # sentence — if the body ends on one, a trailing noun was dropped (truncated).
+    _DANGLING_ADJECTIVES = frozenset({
+        "global", "international", "national", "domestic", "regional", "local",
+        "central", "federal", "potential", "ongoing", "various", "several",
+        "multiple", "other", "such", "key", "major", "minor", "recent", "general",
+        "overall", "total", "annual", "monthly", "daily", "initial", "final",
+        "further", "additional", "economic", "political", "social", "financial",
+        "military", "digital", "senior", "junior", "former", "current", "upcoming",
+        "alleged", "possible", "likely", "rising", "growing", "broader", "wider",
+        "the", "a", "an", "this", "that", "these", "those", "his", "her", "their", "its",
+    })
+
     def _has_dangling_tail(self, body: str) -> bool:
         text = " ".join((body or "").split()).lower()
         if not text:
             return False
+        # Trailing attributive adjective / determiner → a noun was clearly cut off.
+        last_word = re.search(r"([a-z]+)\.$", text)
+        if last_word and last_word.group(1) in self._DANGLING_ADJECTIVES:
+            return True
         if re.search(r"\b(?:in|on|at|to|for|from|with|by|of|as|into|over|under|about|between|through|across|and|or|but|so|yet)\.$", text):
             return True
         if re.search(
@@ -927,10 +944,12 @@ Headline style patterns (factual, high-click, non-clickbait):
         if not text or not self._has_dangling_tail(text):
             return text
 
-        fallback = text[:-1]
-        stop = max(fallback.rfind("."), fallback.rfind("!"), fallback.rfind("?"))
-        if stop > 0:
-            text = fallback[: stop + 1].strip()
+        # Drop the dangling final sentence using sentence-aware splitting so that
+        # decimals ("7.2%"), acronyms, and "5-1" are never mistaken for a
+        # sentence boundary (a raw rfind('.') would chop "7.2" into "7.").
+        sentences = self._split_sentences(text)
+        if len(sentences) > 1:
+            text = " ".join(sentences[:-1]).strip()
         else:
             text = ""
 
@@ -1663,12 +1682,13 @@ TITLE — 16 to 80 characters, sentence case
 - No clickbait, no questions, no rhetorical hooks, no exclamations, no colons used as drama, no em-dashes for effect, no "this is why", "here's how", "shocking".
 - Never cut a word to fit. If too long, rewrite tighter.
 
-BODY — 299 to 360 characters, 3 to 5 short sentences
-- Sentence 1: the core update (who did what, where, when if same-day).
-- Sentence 2: scale, mechanism, or named context (numbers, names, place).
-- Sentence 3: consequence, next step, or named stakeholder reaction.
-- Optional sentence 4–5: only if it adds a fact not yet stated.
-- Front-load facts. Cut every word that does not earn its place.
+BODY — one cohesive paragraph, 299 to 360 characters, 3 to 4 complete sentences
+- Write it as a single flowing news paragraph, not a list of stacked facts. Each sentence must connect logically to the one before it so the story reads as one continuous account.
+- Open with a framing lede: the core update (who did what, where, when) in one clean sentence that sets the scene.
+- Build from there: each following sentence adds new, connected information — scale, mechanism, named context, then consequence, next step, or named reaction. Carry the thread forward; do not restate the lede.
+- Vary sentence length and rhythm. Avoid a run of identical short clauses and avoid "X included figures like Y" list framing — name who matters in a natural sentence.
+- The CLOSING sentence must be complete and substantive: land a real fact, consequence, or named reaction. Never end on a trailing or hollow fragment ("and pledged.", "officials said.", "more to follow."). If you cannot finish a thought within the limit, drop it and end the previous sentence cleanly.
+- Front-load facts; cut every word that does not earn its place — but never sacrifice a complete, meaningful sentence just to hit a character count.
 - Use specific names over generic labels (write "Modi" not "the prime minister" when the source names him).
 - Preserve exact figures, dates, technical designations, and named systems from the source.
 - Expand acronyms once on first mention if the source uses them, e.g. Reserve Bank of India (RBI), Board of Control for Cricket in India (BCCI).
@@ -1686,7 +1706,8 @@ NEVER WRITE
 QUALITY BAR
 - Read the full source before writing. Use later paragraphs when they add scale, timeline, or consequence missing from the lede.
 - Rewrite freshly; do not lift sentences verbatim except where a name or figure leaves no alternative.
-- End on a complete sentence with a fact, not a tease.
+- The body must read as one smooth, well-framed paragraph that a person would actually say aloud — coherent and connected, not a bullet list flattened into prose.
+- Re-read your body: if any sentence feels disconnected, choppy, or ends mid-thought, rewrite it. The final sentence must be complete and carry a real fact.
 """
 
         last_content = ""
@@ -1704,8 +1725,10 @@ QUALITY BAR
                         {
                             "role": "user",
                             "content": (
-                                "Rewrite to be cleaner and more concrete. "
-                                "Use only source facts, keep the title direct, and make the body sentence-driven and complete. "
+                                "Rewrite to be cleaner and more concrete. Make the body one cohesive, flowing paragraph "
+                                "where each sentence connects to the last — not stacked, disconnected facts. "
+                                "The final sentence must be complete and land a real fact; never end on a fragment like 'and pledged.' "
+                                "Use only source facts, keep the title direct. "
                                 "Title 16-80 chars, body 299-360 chars, no filler, no publisher names, no opinions; JSON only. "
                                 f"{retry_feedback}".strip()
                             ),
