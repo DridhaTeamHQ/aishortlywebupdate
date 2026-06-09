@@ -20,15 +20,21 @@ export default function LoginPage() {
     setNotice('');
 
     if (isSignUp) {
-      const { error } = await supabase.auth.signUp({ email, password });
-      if (error) {
-        setError(error.message);
+      const { error: signUpError } = await supabase.auth.signUp({ email, password });
+      if (signUpError) {
+        setError(signUpError.message);
         setBusy(false);
+        return;
+      }
+      // Try to sign in immediately — succeeds when email confirmation is disabled.
+      const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+      if (!signInError) {
+        router.push('/dashboard');
         return;
       }
       setIsSignUp(false);
       setBusy(false);
-      setNotice('Account created. Check your email to confirm, then sign in.');
+      setNotice('Account created. Ask an admin to confirm it, then sign in.');
       return;
     }
 
