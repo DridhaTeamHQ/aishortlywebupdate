@@ -764,13 +764,21 @@ class HardenedOrchestrator:
 
         return False
 
-    def _is_semantic_duplicate(self, title: str, body: str = "") -> bool:
-        """LLM gate: is this the same news event as something already published?
+    def _distinctive_numbers(self, text: str) -> set[str]:
+        """Years and large counts that strongly identify a specific story."""
+        nums = set()
+        for tok in re.findall(r"\b\d{3,4}\b", text or ""):
+            nums.add(tok)
+        return nums
 
-        Fuzzy title matching misses the same story reworded by another source
-        (e.g. "Illegal mosque in Japan faces demolition" vs "Japan orders review
-        of illegally built mosque in Kawagoe"). This compares the candidate
-        against recently published headlines and asks the model for a verdict.
+    def _is_semantic_duplicate(self, title: str, body: str = "", source_title: str = "") -> bool:
+        """Is this the same news event as something already published?
+
+        Catches the same story reworded by another source/angle — which fuzzy
+        title matching misses (e.g. "US warns China could seize Taiwan by 2027"
+        vs "2027 Davidson Window for China-Taiwan readiness"). Combines a
+        deterministic distinctive-entity check with an LLM verdict, and never
+        defaults to "publish" on an empty/failed model response.
         """
         title = (title or "").strip()
         if not title:
@@ -780,37 +788,63 @@ class HardenedOrchestrator:
         if not recent:
             return False
 
+        # Pre-filter to published titles that share a distinctive entity, so the
+        # check stays focused (and cheap) even on a high-volume feed.
+        cand_entities = self._title_entities(title) | self._title_entities(source_title)
+        cand_numbers = self._distinctive_numbers(f"{title} {body} {source_title}")
+        scored: List[Tuple[int, str]] = []
+        for t in recent:
+            shared = len(cand_entities & self._title_entities(t))
+            if shared >= 1:
+                scored.append((shared, t))
+        scored.sort(key=lambda row: -row[0])
+
+        # Deterministic shortcut: 2+ shared proper nouns AND a shared distinctive
+        # number (e.g. China, Taiwan + 2027) is almost certainly the same story.
+        for shared, t in scored:
+            if shared >= 2 and (cand_numbers & self._distinctive_numbers(t)):
+                self.logger.info(f"dedup.entity_number_match title={title[:60]} vs {t[:50]}")
+                return True
+
         client = getattr(self.summarizer, "client", None)
         if not client or not getattr(client, "available", False):
             return False
 
-        # Bound the prompt: most recent titles are the likeliest collisions.
-        candidates = recent[-40:]
+        candidates = [t for _, t in scored[:30]] or recent[-30:]
         numbered = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(candidates))
         lead = " ".join((body or "").split())[:240]
         prompt = (
             "You are deduplicating a news feed. Decide whether the NEW story reports the "
-            "SAME underlying real-world event as ANY of the EXISTING headlines — even if "
-            "worded differently, from another source, or covering a slightly different angle "
-            "of the same event.\n\n"
+            "SAME underlying real-world event, incident, decision or development as ANY of the "
+            "EXISTING headlines — even if the wording, source, framing, or angle differs. Two "
+            "headlines about the same event are DUPLICATES (e.g. 'US warns China could seize "
+            "Taiwan by 2027' and '2027 Davidson Window for China-Taiwan readiness' are the same "
+            "story).\n\n"
             f"NEW headline: {title}\n"
             + (f"NEW lead: {lead}\n" if lead else "")
             + "\nEXISTING headlines:\n"
             f"{numbered}\n\n"
-            "Answer with ONLY one token:\n"
-            "DUP  - if NEW is the same event as any EXISTING headline\n"
-            "NEW  - if NEW is a distinct event"
+            "Reply with exactly one token: DUP (same event as one above) or NEW (distinct event)."
         )
 
         try:
-            raw = (client.generate_text(prompt, temperature=0, max_output_tokens=8) or "").strip().upper()
-            is_dup = raw.startswith("DUP")
-            if is_dup:
-                self.logger.info(f"dedup.semantic_match title={title[:60]}")
-            return is_dup
+            raw = (client.generate_text(prompt, max_output_tokens=1500, reasoning_effort="low") or "").strip().upper()
         except Exception as exc:
             self.logger.warning(f"Semantic dedup check failed (non-fatal): {exc}")
+            raw = ""
+
+        if raw.startswith("DUP"):
+            self.logger.info(f"dedup.semantic_match title={title[:60]}")
+            return True
+        if raw.startswith("NEW"):
             return False
+
+        # Empty/garbled model response — do NOT default to publishing. Fall back to
+        # a conservative entity heuristic so a flaky call can't leak duplicates.
+        fallback_dup = any(shared >= 2 for shared, _ in scored)
+        if fallback_dup:
+            self.logger.info(f"dedup.fallback_entity_match title={title[:60]} (empty LLM verdict)")
+        return fallback_dup
 
     def _pop_with_source_backoff(
         self,
@@ -1089,7 +1123,9 @@ class HardenedOrchestrator:
 
         # Semantic gate: catch the same event reworded by a different source/run,
         # which fuzzy title matching cannot detect (different headline, same story).
-        if self._is_semantic_duplicate(summary["title"], summary.get("body", "")):
+        if self._is_semantic_duplicate(
+            summary["title"], summary.get("body", ""), source_title=getattr(article, "title", "")
+        ):
             self.logger.info(f"skip.semantic_duplicate title={summary['title'][:60]} url={article.url}")
             return False, "duplicate_story", "", ""
 
