@@ -977,17 +977,97 @@ Headline style patterns (factual, high-click, non-clickbait):
             return False
         return any(re.search(pattern, low) for pattern in self._VAGUE_TITLE_PATTERNS)
 
-    def _title_from_body_lede(self, body: str, max_title: int) -> str:
+    _TITLE_BAD_STARTS = (
+        "and", "but", "or", "so", "nor", "yet", "because", "also", "however",
+        "he", "she", "it", "they", "we", "you", "his", "her", "its", "their",
+        "this", "that", "these", "those", "him", "them",
+    )
+
+    def _significant_words(self, text: str) -> set[str]:
+        words = set()
+        for token in re.findall(r"[a-z0-9]{3,}", (text or "").lower()):
+            if token not in self._STYLE_STOPWORDS:
+                words.add(token)
+        return words
+
+    def _title_matches_lede(self, title: str, body: str) -> bool:
+        """True if the title shares enough content with the body's first sentence."""
+        sentences = self._split_sentences(body or "")
+        if not sentences:
+            return True
+        title_words = self._significant_words(title)
+        lede_words = self._significant_words(sentences[0])
+        if not title_words or not lede_words:
+            return True
+        overlap = len(title_words & lede_words)
+        # A real headline restates the lede's subject/action — expect 2+ shared
+        # significant words (or 1 when the title is very short).
+        return overlap >= 2 or (overlap >= 1 and len(title_words) <= 4)
+
+    def _title_starts_bad(self, title: str) -> bool:
+        clean = " ".join((title or "").split())
+        if not clean:
+            return True
+        first = re.sub(r"[^a-z]", "", clean.split()[0].lower())
+        return first in self._TITLE_BAD_STARTS
+
+    def _is_bad_title(self, title: str, body: str) -> bool:
+        clean = " ".join((title or "").split())
+        if not clean:
+            return True
+        if self._title_starts_bad(clean):
+            return True
+        if not self._title_matches_lede(clean, body):
+            return True
+        return False
+
+    def _title_well_formed(self, title: str) -> bool:
+        """A rebuilt title is acceptable if it names a subject and is specific,
+        even when the body's own lede is weak."""
+        return bool(title) and not self._title_starts_bad(title) and not self._is_vague_title(title)
+
+    def _lede_subject(self, source_title: str, body: str) -> str:
+        """The main subject (first proper noun) to lead a headline with."""
+        for text in (source_title, body):
+            for token in re.findall(r"\b[A-Z][A-Za-z]{2,}\b", text or ""):
+                if token.lower() in self._STYLE_STOPWORDS:
+                    continue
+                return token
+        return ""
+
+    def _title_from_body_lede(self, body: str, max_title: int, source_title: str = "") -> str:
         sentences = self._split_sentences(body or "")
         if not sentences:
             return ""
-        lede = sentences[0].rstrip(" .!?")
+
+        # Pick the most newsworthy sentence (numbers + named entities win), not
+        # necessarily the first — the model sometimes leads with a minor detail.
+        def score(sentence: str) -> int:
+            sc = 0
+            if re.search(r"\d", sentence):
+                sc += 3
+            sc += min(len(re.findall(r"\b[A-Z][a-z]{2,}\b", sentence)), 3)
+            if re.match(r"^\s*(?:He|She|It|They|His|Her|Its|Their|This|That)\b", sentence):
+                sc -= 2
+            return sc
+
+        best = max(sentences, key=score)
+        lede = best.rstrip(" .!?")
+
+        # Strip a leading pronoun (+ adverb) and name the actual subject.
+        m = re.match(r"^\s*(?:He|She|It|They)\s+(?:also|then|now|later|reportedly|further)?\s*", lede)
+        if m:
+            subject = self._lede_subject(source_title, body)
+            rest = lede[m.end():].strip()
+            lede = f"{subject} {rest}".strip() if subject else rest
+
         # Drop a trailing subordinate clause to keep the headline tight.
-        for sep in (", after ", " after ", ", following ", ", as ", ", with ", ", and "):
+        for sep in (", after ", " after ", ", following ", ", as ", ", with ", ", and ", " located ", " to limit ", " aimed at "):
             idx = lede.find(sep)
-            if 18 < idx < max_title + 20:
+            if 18 < idx < max_title + 25:
                 lede = lede[:idx]
                 break
+
         lede = self._remove_title_commas(self._normalize_title_punctuation(lede))
         lede = self._to_sentence_case_headline(lede)
         if len(lede) > max_title:
@@ -1059,6 +1139,10 @@ Headline style patterns (factual, high-click, non-clickbait):
         # A relative clause cut off after one short token, e.g. "...that UN.",
         # "...which RBI." (the clause's verb/object was dropped).
         if re.search(r"\b(?:that|which|where|whose|whom|when|who)\s+[A-Za-z.&]{1,5}\.$", text):
+            return True
+        # A trailing appositive fragment, e.g. "...bus stands, a move." — the
+        # describing clause ("a move aimed at...") was cut off.
+        if re.search(r",\s+(?:a|an|the)\s+(?:move|step|decision|measure|gesture|sign|shift|development|bid|push|ploy|effort)\.$", text):
             return True
         if re.search(
             r"\b(?:in|on|at|to|for|from|with|by|of|as|into|over|under|about|between|through|across|and|or|but|so|yet)\s+"
@@ -1890,7 +1974,7 @@ BODY — one cohesive paragraph, 2 to 4 complete sentences, aim for {min_body}-{
 - REWRITE in your own words. Do NOT copy sentences from the source. Never reuse 5 or more consecutive words from the source text (proper names, figures, and fixed designations are the only exceptions). If a sentence reads like the source, rebuild it from scratch.
 - USE ONLY SOURCE FACTS. Never invent a fact, a quote, a reaction, or a generic closing line to reach the length. Do NOT add commentary the source did not state ("market participants said...", "officials said the event aimed to...", "the outlook remains fragile"). If the source only supports two strong sentences, write exactly two — a tight short card is far better than a padded one.
 - Keep Indian-style figures as the source gives them: write "22 lakh" and "5 lakh", not "2.2 million" / "500,000"; keep "crore" as crore.
-- STRONG OPENING: the first sentence is the lede — open immediately on the strongest, most specific fact (who did what, where, when, how big). No throat-clearing, no scene-setting wind-up, no weak opener like "In a recent development" or "A report says". The first six words should already carry real news.
+- STRONG OPENING: the first sentence is the lede — open on the single most consequential fact (the biggest number, the official action/decision), even if the source lists it last. Never lead with a minor or personal detail (e.g. "brings his own lunch") when a bigger action exists (e.g. "ordered 717 outlets shut"). Name the subject — never start the body with a bare pronoun ("He", "She", "They"). No throat-clearing or wind-up; the first six words should carry the real news.
 - The first sentence must deliver the SAME fact as the title, expanded with one or two concrete specifics.
 - Each later sentence adds NEW connected information — scale, mechanism, named context, then consequence, next step, or named reaction. Carry the thread forward; never restate the lede.
 - Prefer two or three clear sentences over one long run-on. Do not cram every fact into a single sentence — break it so each sentence is complete and easy to read.
@@ -2030,8 +2114,21 @@ Only return the JSON once all four pass.
                             "not a generic phrase like 'delivers a dominant performance'."
                         )
                         continue
-                    rebuilt = self._title_from_body_lede(body_out, max_title)
+                    rebuilt = self._title_from_body_lede(body_out, max_title, source_title=article_title)
                     if rebuilt and not self._is_vague_title(rebuilt):
+                        title_out = rebuilt
+
+                if self._is_bad_title(title_out, body_out):
+                    self.logger.warning(f"Title broken/off-topic: {title_out!r}, retrying...")
+                    if attempt < (max_retries - 1):
+                        retry_feedback = (
+                            "The headline is wrong: it must state the MAIN news in the first sentence of the body, "
+                            "naming the subject (not a pronoun) and the key action. Do not start with 'And/But/He/She/"
+                            "It/They' and do not headline a minor side detail. Rebuild it to match the lede."
+                        )
+                        continue
+                    rebuilt = self._title_from_body_lede(body_out, max_title, source_title=article_title)
+                    if self._title_well_formed(rebuilt):
                         title_out = rebuilt
 
                 body_is_complete = body_out.endswith((".", "!", "?")) and not self._has_dangling_tail(body_out)
@@ -2144,6 +2241,16 @@ Only return the JSON once all four pass.
 
                 if not self._has_body_hook(body_out):
                     self.logger.warning("Summary body lacks a clear factual lead, keeping best fitted version")
+
+                # FINAL coherence pass: body may have been re-picked after the
+                # earlier title check (e.g. via _fallback_body), so the title can
+                # now describe a different fact than the body's lede. Rebuild the
+                # title from the final lede if it no longer matches.
+                if self._is_bad_title(title_out, body_out):
+                    rebuilt = self._title_from_body_lede(body_out, max_title, source_title=article_title)
+                    if self._title_well_formed(rebuilt):
+                        self.logger.info(f"Title realigned to lede: {title_out!r} -> {rebuilt!r}")
+                        title_out = self._restore_designations(rebuilt, article_title, article_body)
 
                 self.logger.info(f"Summary ready: title={len(title_out)} chars, body={len(body_out)} chars")
                 return {"title": title_out, "body": body_out}
