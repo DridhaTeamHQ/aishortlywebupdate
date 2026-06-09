@@ -11,7 +11,7 @@ import httpx
 from playwright.async_api import Browser, BrowserContext, Page, async_playwright
 
 from config.settings import get_settings
-from core.cms.image_finder import GoogleImageFinder
+from core.cms.image_finder import GoogleImageFinder, find_and_download_in_new_tab
 from utils.image_utils import meets_minimum_resolution
 from utils.logger import get_logger
 
@@ -1093,10 +1093,15 @@ class CMSPublisher:
             if (
                 (not image_path or not os.path.exists(image_path))
                 and data.image_search_query
-                and self.image_finder is not None
+                and self.context is not None
             ):
                 self.logger.info(f"Image path missing, trying search fallback: {data.image_search_query}")
-                image_path = await self.image_finder.find_and_download(data.image_search_query)
+                # IMPORTANT: run the image search in a SEPARATE tab that is closed
+                # afterwards. Never navigate self.page — doing so destroys the open
+                # Create Article form and breaks the next article (form_not_open).
+                image_path = await find_and_download_in_new_tab(
+                    self.context, data.image_search_query
+                )
 
             if not image_path or not os.path.exists(image_path):
                 return self._fail("image_missing")
