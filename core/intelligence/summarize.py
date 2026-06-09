@@ -306,6 +306,67 @@ Headline style patterns (factual, high-click, non-clickbait):
         lines.append("Follow the punch, specificity, and sentence rhythm of these examples without copying them.")
         return "\n".join(lines)
 
+    def _house_style_block(self) -> str:
+        """Fixed gold-standard examples that define the house voice and framing."""
+        examples = [
+            (
+                "Technology",
+                "Indian Railways to introduce AI waitlist forecasts",
+                "Indian Railways will roll out an AI-powered booking system that predicts a ticket's "
+                "waitlist-confirmation odds at the moment of booking. Slated for August 2026, the upgrade "
+                "is built to sharpen travel planning, giving passengers clearer, real-time insight into "
+                "seat availability.",
+            ),
+            (
+                "Sports",
+                "Hardik Pandya cleared for Afghanistan ODI series",
+                "Hardik Pandya will return for India's three-match ODI series against Afghanistan, opening "
+                "Sunday in Dharamsala. The 32-year-old, sidelined from several Mumbai Indians IPL games by "
+                "back spasms, was passed fit by the BCCI's Centre of Excellence after completing five days "
+                "of match simulations and full 10-over bowling spells.",
+            ),
+            (
+                "National",
+                "AAP exits INDIA bloc, demands clear agenda",
+                "The Aam Aadmi Party has formally walked out of the opposition INDIA bloc, sealing the split "
+                "by skipping Monday's alliance meeting. Confirming the move, AAP Rajya Sabha MP Sanjay Singh "
+                "declared the party is no longer part of the alliance and pressed the remaining members to "
+                "spell out a clear legislative agenda.",
+            ),
+            (
+                "National",
+                "ED raids six sites in Punjab, UP and Delhi-NCR",
+                "The Enforcement Directorate searched six premises across Punjab, Uttar Pradesh and Delhi-NCR "
+                "on Tuesday under the Prevention of Money Laundering Act. Targeting homes and offices in "
+                "Ludhiana, Jalandhar, Bareilly and Noida, the raids are part of a money-laundering probe "
+                "tied to Hampton Sky Realty Ltd, officials said.",
+            ),
+            (
+                "International",
+                "Navy coordinates rescue of 24 Indians after tanker attack",
+                "Twenty-four Indian seafarers were rescued after a missile strike on the Palau-flagged tanker "
+                "MT Marivex off Oman's Masirah coast. Tipped off by a crew member's relative, MRCC Mumbai "
+                "worked with Oman's maritime rescue centre to divert a nearby ship and scramble two "
+                "helicopters, bringing the entire crew to safety.",
+            ),
+            (
+                "Finance",
+                "Rupee slips 17 paise to 95.35 against the dollar",
+                "The rupee weakened 17 paise to 95.35 against the US dollar in early trade, pressured by "
+                "global headwinds. A firm dollar, climbing crude prices and persistent geopolitical tension "
+                "soured investor sentiment, keeping the currency under strain on the foreign-exchange market.",
+            ),
+        ]
+        lines = [
+            "HOUSE STYLE — match the voice, tightness, and framing of these cards. "
+            "Notice the headline and the first sentence always carry the SAME fact, and nothing is "
+            "copied from a source. Do NOT reuse their content:",
+        ]
+        for category, title, body in examples:
+            lines.append(f"[{category}] TITLE: {title}")
+            lines.append(f"[{category}] BODY: {body}")
+        return "\n".join(lines)
+
     def _title_case_headline(self, title: str) -> str:
         if not title:
             return title
@@ -519,7 +580,7 @@ Headline style patterns (factual, high-click, non-clickbait):
         )
 
     def _normalize_title_punctuation(self, title: str) -> str:
-        out = " ".join((title or "").split())
+        out = self._ascii_punct(" ".join((title or "").split()))
         if not out:
             return out
         out = re.sub(r"\s+([,.;:!?])", r"\1", out)
@@ -535,7 +596,11 @@ Headline style patterns (factual, high-click, non-clickbait):
         out = " ".join((title or "").split())
         if not out:
             return out
-        out = re.sub(r"\s*,\s*", ": ", out)
+        # The CMS forbids commas in titles. The model is told to avoid them and to
+        # use a colon for an intentional separator, so a stray comma here is almost
+        # always a list separator — replace it with a space, never a colon (which
+        # produced artefacts like "central: Western Iran").
+        out = re.sub(r"\s*,\s*", " ", out)
         out = re.sub(r"\s*:\s*:\s*", ": ", out)
         out = re.sub(r"\s{2,}", " ", out)
         return out.strip(" ,.-:")
@@ -562,14 +627,21 @@ Headline style patterns (factual, high-click, non-clickbait):
         if not out or not src:
             return out
 
+        # Only treat a word as a proper noun if it appears capitalised
+        # MID-sentence in the source. Sentence-initial capitals ("Paper setters
+        # are kept...") are NOT proper nouns and must not be force-capitalised
+        # everywhere in the title (which produced "Paper setters", "Maritime Rescue").
         proper_map: Dict[str, str] = {}
-        for token in re.findall(r"\b[A-Za-z][A-Za-z'\u2019-]*\b", src):
-            if len(token) < 3:
-                continue
-            if token.isupper():
-                continue
-            if token[0].isupper():
-                proper_map[token.lower()] = token
+        for sentence in self._split_sentences(src):
+            words = sentence.split()
+            for idx, raw in enumerate(words):
+                token = re.sub(r"[^A-Za-z'\u2019-]", "", raw)
+                if len(token) < 3 or token.isupper():
+                    continue
+                if idx == 0:
+                    continue  # skip the first word of each sentence
+                if token[0].isupper():
+                    proper_map[token.lower()] = token
 
         for token in self._COMMON_PROPER_NOUNS:
             proper_map.setdefault(token.lower(), token[:1].upper() + token[1:])
@@ -625,8 +697,24 @@ Headline style patterns (factual, high-click, non-clickbait):
             return False
         return any(re.search(pattern, low, flags=re.IGNORECASE) for pattern in self._SOURCE_BOILERPLATE_PATTERNS)
 
+    _UNICODE_PUNCT = {
+        "‐": "-", "‑": "-", "‒": "-", "–": "-", "—": "-", "―": "-",
+        "‘": "'", "’": "'", "‚": "'", "‛": "'", "′": "'",
+        "“": '"', "”": '"', "„": '"', "″": '"',
+        "…": "...", " ": " ", " ": " ", " ": " ", "​": "",
+    }
+
+    def _ascii_punct(self, text: str) -> str:
+        """Convert smart hyphens, curly quotes and friends to plain ASCII."""
+        if not text:
+            return text
+        for needle, repl in self._UNICODE_PUNCT.items():
+            if needle in text:
+                text = text.replace(needle, repl)
+        return text
+
     def _normalize_body_punctuation(self, body: str) -> str:
-        text = " ".join((body or "").split())
+        text = self._ascii_punct(" ".join((body or "").split()))
         if not text:
             return text
         text = re.sub(r"\s+([,.;:!?])", r"\1", text)
@@ -634,6 +722,8 @@ Headline style patterns (factual, high-click, non-clickbait):
         text = re.sub(r"(?:\b(?:The\s+Times\s+of\s+India|Times\s+of\s+India|India\s+Today|BBC\s+News|Al\s*Jazeera)\b\.?\s*)+", "", text, flags=re.IGNORECASE)
         text = re.sub(r"\s+'", " '", text)
         text = re.sub(r"'\s+", "' ", text)
+        # "US.-Iran" / "US." before a capital or hyphen → "US"
+        text = re.sub(r"\bUS\.(?=[-A-Z])", "US", text)
         if text[-1] not in ".!?":
             text = f"{text}."
         text = re.sub(r"\.\.+", ".", text)
@@ -770,18 +860,19 @@ Headline style patterns (factual, high-click, non-clickbait):
 
         normalized_body = " ".join((body or "").split()).lower()
         normalized_source = " ".join((source_body or "").split()).lower()
-        if SequenceMatcher(None, normalized_body, normalized_source).ratio() >= 0.82:
+        if SequenceMatcher(None, normalized_body, normalized_source).ratio() >= 0.80:
             return True
 
-        copied_sentences = 0
+        # Any single sentence lifted near-verbatim from the source is unacceptable.
         for sentence in body_sentences:
             normalized_sentence = self._normalize_body_punctuation(sentence).lower()
+            if len(normalized_sentence) < 40:
+                continue
             for source_sentence in source_sentences:
                 normalized_source_sentence = self._normalize_body_punctuation(source_sentence).lower()
-                if SequenceMatcher(None, normalized_sentence, normalized_source_sentence).ratio() >= 0.9:
-                    copied_sentences += 1
-                    break
-        return copied_sentences >= 2
+                if SequenceMatcher(None, normalized_sentence, normalized_source_sentence).ratio() >= 0.86:
+                    return True
+        return False
 
     def _source_context_tail(self, source_title: str, source_body: str) -> str:
         text = f" {source_title} {source_body} ".lower()
@@ -871,6 +962,38 @@ Headline style patterns (factual, high-click, non-clickbait):
 
         return candidates[0] if candidates else ""
 
+    _VAGUE_TITLE_PATTERNS = (
+        r"\b(?:dominant|strong|impressive|commanding|brilliant|stunning|big|major|huge|massive|great)\s+"
+        r"(?:performance|showing|win|victory|display|effort|result|moment|day)\b",
+        r"\b(?:delivers?|delivered|produces?|puts?\s+on|makes?)\s+(?:a\s+)?"
+        r"(?:dominant|strong|commanding|big|major|great|fine)\b",
+        r"\bmakes?\s+(?:a\s+)?(?:big|major|key|bold|surprise)\s+(?:move|decision|statement|announcement)\b",
+        r"\b(?:key|major|big|important)\s+(?:development|update|move)\b$",
+    )
+
+    def _is_vague_title(self, title: str) -> bool:
+        low = " ".join((title or "").split()).lower()
+        if not low:
+            return False
+        return any(re.search(pattern, low) for pattern in self._VAGUE_TITLE_PATTERNS)
+
+    def _title_from_body_lede(self, body: str, max_title: int) -> str:
+        sentences = self._split_sentences(body or "")
+        if not sentences:
+            return ""
+        lede = sentences[0].rstrip(" .!?")
+        # Drop a trailing subordinate clause to keep the headline tight.
+        for sep in (", after ", " after ", ", following ", ", as ", ", with ", ", and "):
+            idx = lede.find(sep)
+            if 18 < idx < max_title + 20:
+                lede = lede[:idx]
+                break
+        lede = self._remove_title_commas(self._normalize_title_punctuation(lede))
+        lede = self._to_sentence_case_headline(lede)
+        if len(lede) > max_title:
+            lede = self._smart_truncate_title(lede, max_title)
+        return lede.strip(" ,.-:")
+
     def _title_too_close_to_source(self, title: str, source_title: str) -> bool:
         clean_title = re.sub(r"[^a-z0-9\s]", "", (title or "").lower()).split()
         clean_source = re.sub(r"[^a-z0-9\s]", "", (source_title or "").lower()).split()
@@ -924,6 +1047,19 @@ Headline style patterns (factual, high-click, non-clickbait):
             return True
         if re.search(r"\b(?:in|on|at|to|for|from|with|by|of|as|into|over|under|about|between|through|across|and|or|but|so|yet)\.$", text):
             return True
+        # A bare hyphenated attributive compound at the very end almost always
+        # means the noun was dropped: "...cross-border.", "...two-state.",
+        # "...post-poll.". Allow a few genuine noun compounds.
+        tail_compound = re.search(r"\b([a-z]{2,}-[a-z]{2,})\.$", text)
+        if tail_compound and tail_compound.group(1) not in {
+            "runner-up", "follow-up", "build-up", "set-up", "start-up", "stand-off", "cease-fire",
+            "year-old", "year-olds", "years-old",
+        }:
+            return True
+        # A relative clause cut off after one short token, e.g. "...that UN.",
+        # "...which RBI." (the clause's verb/object was dropped).
+        if re.search(r"\b(?:that|which|where|whose|whom|when|who)\s+[A-Za-z.&]{1,5}\.$", text):
+            return True
         if re.search(
             r"\b(?:in|on|at|to|for|from|with|by|of|as|into|over|under|about|between|through|across|and|or|but|so|yet)\s+"
             r"(?:the|a|an|his|her|their|its|this|that|they|he|she|we|you)\.$",
@@ -939,15 +1075,38 @@ Headline style patterns (factual, high-click, non-clickbait):
             return True
         return False
 
+    def _trim_dangling_clause(self, sentence: str) -> str:
+        """Cut a trailing incomplete clause so the sentence ends complete.
+
+        e.g. "...internal crises and charging Islamabad with cross-border." ->
+        "...internal crises." — preserving the rest instead of dropping it all.
+        """
+        s = (sentence or "").rstrip(" .!?")
+        for sep in (", and ", " and ", "; ", ", while ", " while ", ", with ", ", citing ", " that ", " which ", ", "):
+            idx = s.rfind(sep)
+            if idx > 40:
+                candidate = s[:idx].rstrip(" ,;-") + "."
+                if not self._has_dangling_tail(candidate):
+                    return candidate
+        return ""
+
     def _ensure_complete_body(self, body: str, source_title: str, source_body: str, min_chars: int, max_chars: int) -> str:
         text = self._normalize_body_punctuation(body)
         if not text or not self._has_dangling_tail(text):
             return text
 
-        # Drop the dangling final sentence using sentence-aware splitting so that
-        # decimals ("7.2%"), acronyms, and "5-1" are never mistaken for a
-        # sentence boundary (a raw rfind('.') would chop "7.2" into "7.").
         sentences = self._split_sentences(text)
+        # First try to repair the last sentence by trimming only its dangling
+        # trailing clause — keeps the lede instead of dropping a whole sentence.
+        if sentences:
+            repaired_last = self._trim_dangling_clause(sentences[-1])
+            if repaired_last:
+                candidate = " ".join(sentences[:-1] + [repaired_last]).strip()
+                if not self._has_dangling_tail(candidate) and len(candidate) >= min_chars - 30:
+                    return self._normalize_body_punctuation(candidate)
+
+        # Otherwise drop the dangling final sentence (sentence-aware so decimals
+        # like "7.2%" and scores like "5-1" are not mistaken for boundaries).
         if len(sentences) > 1:
             text = " ".join(sentences[:-1]).strip()
         else:
@@ -1358,14 +1517,16 @@ Headline style patterns (factual, high-click, non-clickbait):
             else:
                 break
 
+        # Always prefer complete sentences over a mid-sentence cut. A slightly
+        # short but complete paragraph beats a truncated fragment ("...while US.").
         if built:
-            current = " ".join(built)
-            if len(current) >= target_chars - 8:
-                return current
+            return " ".join(built)
 
+        # No whole sentence fits (one very long sentence) — cut at the last
+        # sentence terminator if any, otherwise at a word boundary.
         clipped = body[:max_chars]
         stop = max(clipped.rfind("."), clipped.rfind("!"), clipped.rfind("?"))
-        if stop >= target_chars - 35:
+        if stop > 40:
             return clipped[: stop + 1].rstrip()
         cut = clipped.rfind(" ")
         return (clipped[:cut] if cut > 0 else clipped).rstrip(" ,.-")
@@ -1464,17 +1625,52 @@ Headline style patterns (factual, high-click, non-clickbait):
 
         return self._normalize_body_punctuation(out)
 
+    def _expand_body_via_model(self, text: str, source_title: str, source_body: str, min_chars: int, max_chars: int) -> str:
+        """Expand a too-short body using the model (own words), never source paste."""
+        if not self.client or not getattr(self.client, "available", False):
+            return text
+        prompt = (
+            f"Expand this news paragraph to between {min_chars} and {max_chars} characters by adding "
+            f"one or two more concrete facts taken FROM THE SOURCE, written in your own words. "
+            f"Keep it as one cohesive, professional paragraph. Do NOT copy sentences from the source, "
+            f"do NOT repeat a fact already stated, and end on a complete sentence. "
+            f"Return only the paragraph text.\n\n"
+            f"SOURCE: {source_body[:2500]}\n\nPARAGRAPH: {text}"
+        )
+        try:
+            out = self.client.generate_text(
+                prompt,
+                system_instruction="You are a precise, professional news copy editor.",
+                max_output_tokens=600,
+            )
+            out = " ".join((out or "").split()).strip().strip('"').strip("'").strip()
+            if out and len(out) >= len(text) and not self._body_too_close_to_source(out, source_body):
+                return out
+        except Exception:
+            pass
+        return text
+
+    def _expand_body_smart(self, text: str, source_title: str, source_body: str, target_chars: int, min_chars: int, max_chars: int) -> str:
+        if self.client and getattr(self.client, "available", False):
+            expanded = self._expand_body_via_model(text, source_title, source_body, min_chars=min_chars, max_chars=max_chars)
+            if expanded and len(expanded) > len(text):
+                return expanded
+        # No model (or it didn't help) — fall back to the conservative source-based pad.
+        return self._expand_body(text, source_title, source_body, target_chars=target_chars, max_chars=max_chars)
+
     def _fit_body_length(self, body: str, source_title: str, source_body: str, target_chars: int, min_chars: int, max_chars: int) -> str:
         out = self._normalize_body_punctuation(body)
         if len(out) < min_chars:
-            out = self._expand_body(out, source_title, source_body, target_chars=target_chars, max_chars=max_chars)
+            out = self._expand_body_smart(out, source_title, source_body, target_chars=target_chars, min_chars=min_chars, max_chars=max_chars)
         if len(out) > max_chars:
             out = self._trim_body_to_band(out, max_chars=max_chars, target_chars=target_chars)
         out = self._normalize_body_punctuation(out)
         out = self._trim_weak_ending_sentence(out, source_title, source_body, min_chars=min_chars, max_chars=max_chars)
         out = self._ensure_complete_body(out, source_title, source_body, min_chars=min_chars, max_chars=max_chars)
         if len(out) < min_chars:
-            out = self._expand_body(out, source_title, source_body, target_chars=max(target_chars, min_chars), max_chars=max_chars)
+            out = self._expand_body_smart(out, source_title, source_body, target_chars=max(target_chars, min_chars), min_chars=min_chars, max_chars=max_chars)
+            if len(out) > max_chars:
+                out = self._trim_body_to_band(out, max_chars=max_chars, target_chars=target_chars)
             out = self._normalize_body_punctuation(out)
             out = self._trim_weak_ending_sentence(out, source_title, source_body, min_chars=min_chars, max_chars=max_chars)
             out = self._ensure_complete_body(out, source_title, source_body, min_chars=min_chars, max_chars=max_chars)
@@ -1611,8 +1807,10 @@ Headline style patterns (factual, high-click, non-clickbait):
     def summarize(self, title: str, body: str, max_retries: int = 2) -> Optional[Dict[str, str]]:
         min_title = 16
         max_title = 80
-        target_body = 345
-        min_body = 299
+        target_body = 320
+        # Lowered floor so a clean model rewrite is never padded with verbatim
+        # source text or invented filler just to hit a count (validator allows >= 50).
+        min_body = 230
         max_body = 360
 
         article_title = " ".join((title or "").split())
@@ -1655,59 +1853,66 @@ Headline style patterns (factual, high-click, non-clickbait):
         credibility_note = self._credibility_prompt_note(article_title, article_body)
 
         system_msg = (
-            "You are a senior wire-service editor writing for an attention-tight mobile news app. "
-            "Voice: confident, neutral, modern, fact-first. No fluff. No marketing language. "
-            "Every sentence must add a fact, not narrate the fact. "
-            "Use only the source — never invent, infer beyond, or speculate. "
-            "Write like Reuters and AP wires: clean nouns, strong verbs, specific numbers."
+            "You are the chief copy editor of a fast, premium mobile news app. You take one raw "
+            "source article and rewrite it into a crisp, professional news card: one sharp headline "
+            "and one tight, well-framed paragraph. "
+            "You write in your OWN words — you never paste or lightly trim the source. "
+            "Voice: confident, neutral, factual, modern. Clean nouns, strong verbs, specific numbers, "
+            "no fluff, no marketing, no opinion. Use only facts present in the source; never invent or "
+            "speculate. The headline and the paragraph must tell the SAME story — the headline names "
+            "the single most important fact, and the paragraph opens on that exact fact."
         )
 
-        prompt = f"""Create a Shortly-style English news card from the source.
+        house_style = self._house_style_block()
 
-Source Title: {article_title}
-Source Text: {article_body}
+        prompt = f"""Rewrite the source below into one professional news card.
 
+SOURCE HEADLINE: {article_title}
+SOURCE TEXT: {article_body}
+
+{house_style}
 {style_examples}
 {credibility_note}
 
 OUTPUT FORMAT
-Output JSON only: {{"title":"...","body":"..."}}
+Return JSON only: {{"title":"...","body":"..."}}
 
 TITLE — 16 to 80 characters, sentence case
-- Lead with the subject, then the action, then the stake. Active voice.
-- Use a strong, specific verb (raises, halts, files, signs, approves, rejects, warns, slashes, blocks, cuts, sues, opens, names, drops, denies, accuses).
-- Include a number, place, name, or stake when the source provides one.
-- Materially reword the source headline; do not echo or lightly trim it.
-- Sentence case: only proper nouns and standard acronyms uppercased.
-- No clickbait, no questions, no rhetorical hooks, no exclamations, no colons used as drama, no em-dashes for effect, no "this is why", "here's how", "shocking".
-- Never cut a word to fit. If too long, rewrite tighter.
+- Name the single most newsworthy fact: subject + strong active verb + the key stake/number/place. Be specific — name the result, opponent, figure, or place. Never a vague summary like "delivers a dominant performance" or "makes a big move"; say what actually happened ("India crush Afghanistan by an innings and 300 runs").
+- Strong verbs: raises, halts, files, signs, approves, rejects, warns, slashes, blocks, cuts, sues, opens, names, drops, denies, accuses, clears, arrests, strikes, rescues, exits.
+- It MUST match the body: the title's main fact is the same fact the body's first sentence states. Never headline a detail the body buries or omits.
+- Reword the source headline completely — do not echo or lightly trim it.
+- Sentence case (only proper nouns and standard acronyms capitalised). No clickbait, questions, rhetorical hooks, or exclamations.
+- NO COMMAS in the title — rephrase to avoid lists (write "ED raids six sites in three states", not "ED raids Punjab, UP, Delhi"). A single clean colon separator is fine (e.g. "Navy alert: 24 sailors rescued"); no dramatic colons or em-dashes.
+- Never cut a word to fit; if too long, rewrite tighter.
 
-BODY — one cohesive paragraph, 299 to 360 characters, 3 to 4 complete sentences
-- Write it as a single flowing news paragraph, not a list of stacked facts. Each sentence must connect logically to the one before it so the story reads as one continuous account.
-- Open with a framing lede: the core update (who did what, where, when) in one clean sentence that sets the scene.
-- Build from there: each following sentence adds new, connected information — scale, mechanism, named context, then consequence, next step, or named reaction. Carry the thread forward; do not restate the lede.
-- Vary sentence length and rhythm. Avoid a run of identical short clauses and avoid "X included figures like Y" list framing — name who matters in a natural sentence.
-- The CLOSING sentence must be complete and substantive: land a real fact, consequence, or named reaction. Never end on a trailing or hollow fragment ("and pledged.", "officials said.", "more to follow."). If you cannot finish a thought within the limit, drop it and end the previous sentence cleanly.
-- Front-load facts; cut every word that does not earn its place — but never sacrifice a complete, meaningful sentence just to hit a character count.
-- Use specific names over generic labels (write "Modi" not "the prime minister" when the source names him).
-- Preserve exact figures, dates, technical designations, and named systems from the source.
-- Expand acronyms once on first mention if the source uses them, e.g. Reserve Bank of India (RBI), Board of Control for Cricket in India (BCCI).
-- If the source qualifies a claim ("appears to show", "reportedly", "alleged", "unverified"), keep that qualifier — never upgrade to confirmed.
-- Never add verification, confirmation, or investigation claims unless the source explicitly states them.
+BODY — one cohesive paragraph, 2 to 4 complete sentences, aim for {min_body}-{max_body} characters
+- REWRITE in your own words. Do NOT copy sentences from the source. Never reuse 5 or more consecutive words from the source text (proper names, figures, and fixed designations are the only exceptions). If a sentence reads like the source, rebuild it from scratch.
+- USE ONLY SOURCE FACTS. Never invent a fact, a quote, a reaction, or a generic closing line to reach the length. Do NOT add commentary the source did not state ("market participants said...", "officials said the event aimed to...", "the outlook remains fragile"). If the source only supports two strong sentences, write exactly two — a tight short card is far better than a padded one.
+- Keep Indian-style figures as the source gives them: write "22 lakh" and "5 lakh", not "2.2 million" / "500,000"; keep "crore" as crore.
+- STRONG OPENING: the first sentence is the lede — open immediately on the strongest, most specific fact (who did what, where, when, how big). No throat-clearing, no scene-setting wind-up, no weak opener like "In a recent development" or "A report says". The first six words should already carry real news.
+- The first sentence must deliver the SAME fact as the title, expanded with one or two concrete specifics.
+- Each later sentence adds NEW connected information — scale, mechanism, named context, then consequence, next step, or named reaction. Carry the thread forward; never restate the lede.
+- Prefer two or three clear sentences over one long run-on. Do not cram every fact into a single sentence — break it so each sentence is complete and easy to read.
+- It must read as one smooth, professional paragraph a newsreader would say aloud — connected, not a list of stacked facts, and not choppy.
+- The closing sentence must be complete and land a real fact or consequence. Never end on a fragment ("and pledged.", "officials said.", "risks from global.").
+- Keep exact figures, dates, technical designations, and named systems. Expand an acronym once on first use if the source uses it (e.g. Enforcement Directorate (ED)).
+- Use specific names over generic labels ("Modi", not "the prime minister", when the source names him).
+- Preserve any source qualifier ("reportedly", "alleged", "appears to") — never upgrade a claim to confirmed, and never add verification the source did not state.
 
 NEVER WRITE
+- Verbatim or near-verbatim source sentences.
 - Source/publisher names ("according to Reuters", "Times of India reported").
-- Filler ("this development", "this comes amid", "in a major move", "meanwhile", "notably", "interestingly").
-- Generic closer lines ("officials said", "the situation is being watched", "more details awaited").
-- Opinion words ("shocking", "stunning", "controversial", "unprecedented" unless the source uses it).
-- Repeating the same fact across sentences.
-- Vague waterway/region explainers ("it is a vital trade route") unless the source itself gives that fact and it is essential.
+- Filler ("this development", "this comes amid", "in a major move", "meanwhile", "notably", "it is worth noting").
+- Generic closers ("officials said", "the situation is being watched", "more details awaited").
+- Opinion words ("shocking", "stunning", "unprecedented") unless the source itself uses them.
 
-QUALITY BAR
-- Read the full source before writing. Use later paragraphs when they add scale, timeline, or consequence missing from the lede.
-- Rewrite freshly; do not lift sentences verbatim except where a name or figure leaves no alternative.
-- The body must read as one smooth, well-framed paragraph that a person would actually say aloud — coherent and connected, not a bullet list flattened into prose.
-- Re-read your body: if any sentence feels disconnected, choppy, or ends mid-thought, rewrite it. The final sentence must be complete and carry a real fact.
+QUALITY BAR — before you answer, self-check:
+1. Does the title state the SAME core fact the first body sentence states? If not, fix the title.
+2. Is any sentence copied or barely changed from the source? If yes, rewrite it from scratch.
+3. Does the first sentence hit real news in its first few words, with no wind-up?
+4. Does the paragraph flow as one connected account and end on a complete fact?
+Only return the JSON once all four pass.
 """
 
         last_content = ""
@@ -1815,6 +2020,19 @@ QUALITY BAR
                         )
                         continue
                     title_out = self._retitle_from_source(article_title, article_body, max_title=max_title)
+
+                if self._is_vague_title(title_out):
+                    self.logger.warning(f"Title too vague: {title_out!r}, retrying...")
+                    if attempt < (max_retries - 1):
+                        retry_feedback = (
+                            "The headline is too vague. Name the specific result, subject, number, or place — "
+                            "say exactly what happened (e.g. 'India crush Afghanistan by an innings and 300 runs'), "
+                            "not a generic phrase like 'delivers a dominant performance'."
+                        )
+                        continue
+                    rebuilt = self._title_from_body_lede(body_out, max_title)
+                    if rebuilt and not self._is_vague_title(rebuilt):
+                        title_out = rebuilt
 
                 body_is_complete = body_out.endswith((".", "!", "?")) and not self._has_dangling_tail(body_out)
                 if len(body_out) < min_body and body_is_complete:
