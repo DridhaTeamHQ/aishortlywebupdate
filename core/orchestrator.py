@@ -486,7 +486,28 @@ class HardenedOrchestrator:
                         self.logger.info(f"skip.low_signal url={article_url} category={category}")
                         continue
 
-                    ok, fail_reason, published_image_ref, published_summary_title = await self._publish_article(article, selected_is_breaking, metrics)
+                    try:
+                        ok, fail_reason, published_image_ref, published_summary_title = await self._publish_article(article, selected_is_breaking, metrics)
+                    except Exception as exc:
+                        # One article must never crash the whole run. Log it, mark
+                        # it failed, try to recover the browser, and move on.
+                        self.logger.error(
+                            f"publish.article_crash url={article_url} error={type(exc).__name__}: {exc}",
+                            exc_info=True,
+                        )
+                        with suppress(Exception):
+                            self.memory.mark_failed(article_url, f"crash:{type(exc).__name__}")
+                        consecutive_publish_failures += 1
+                        with suppress(Exception):
+                            await self._recover_browser_session()
+                        if consecutive_publish_failures >= self.max_consecutive_publish_failures:
+                            self.logger.error(
+                                f"Too many consecutive failures ({consecutive_publish_failures}) in "
+                                f"category={category} — skipping to next category"
+                            )
+                            consecutive_publish_failures = 0
+                            break
+                        continue
                     if ok:
                         cat_published += 1
                         published += 1
