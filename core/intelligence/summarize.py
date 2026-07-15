@@ -1918,9 +1918,29 @@ Headline style patterns (factual, high-click, non-clickbait):
         _cleaned = article_body_raw
         for _pat in _BOILERPLATE_PATTERNS:
             _cleaned = _re.sub(_pat, "", _cleaned, flags=_re.IGNORECASE | _re.DOTALL).strip()
+
+        # Strip scraped JavaScript / ad-embed junk (e.g. vdo.ai player scripts
+        # that some sources inline into the article body).
+        _cleaned = _re.sub(r"<script[^>]*>.*?</script>", " ", _cleaned, flags=_re.IGNORECASE | _re.DOTALL)
+        _cleaned = _re.sub(r"<[^>]+>", " ", _cleaned)  # any stray HTML tags
+        # IIFE ad blocks like (function(v,d,o,ai){...})(window, document, "//a.vdo.ai/...js");
+        _cleaned = _re.sub(r"\(function\s*\([^)]*\)\s*\{.*?\}\s*\)\s*\([^;]*\)\s*;?", " ", _cleaned, flags=_re.DOTALL)
+        # Residual JS fragments / script srcs
+        _cleaned = _re.sub(r"\b\w+\.(?:createElement|appendChild|getElementById|setAttribute)\b[^.;]*[.;]?", " ", _cleaned)
+        _cleaned = _re.sub(r"(?:window|document|d\.head|v\.location)\.\w+[^.;]*[.;]?", " ", _cleaned)
+        _cleaned = _re.sub(r"[\"']?//[\w.\-]+\.(?:ai|com|net|io)/[\w./\-]*\.js[\"']?", " ", _cleaned)
+        _cleaned = _re.sub(r"\s+", " ", _cleaned).strip()
         article_body = _cleaned[:5200]
 
         if not article_title or not article_body:
+            return None
+
+        # If cleaning left almost no real prose (the page was mostly ad/script or
+        # the scraper failed to extract the article), skip rather than publish junk.
+        if len(article_body) < 150 or len(re.findall(r"[A-Za-z]{3,}", article_body)) < 20:
+            self.logger.warning(
+                f"Body too thin after cleaning ({len(article_body)} chars) — skipping article"
+            )
             return None
         if not self.client or not self.client.available:
             return self._fallback_summary(
